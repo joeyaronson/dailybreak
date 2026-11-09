@@ -73,3 +73,13 @@ The seed is a stable hash of `dailybreak-v1:YYYY-MM-DD`. Keep the version, PRNG,
 The device clock determines the date; this starter has no server authority or anti-cheat. No player progress is stored yet. If you add local storage, namespace saves by game version and date key.
 
 Scaffolded from the official [Vite React TypeScript template](https://vite.dev/guide/).
+
+## Visit counts
+
+GoatCounter tracks page visits using `https://dailybreak.goatcounter.com/count`.
+The public site address is configured with `GOATCOUNTER_URL` in `.env.production`.
+The script is included only in production builds; local development sends no
+visits. No custom game events are sent. Remove the setting to disable tracking.
+
+View counts at <https://dailybreak.goatcounter.com/>. Ad blockers and network
+filters may prevent visits from being counted.
