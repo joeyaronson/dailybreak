@@ -1,6 +1,7 @@
 import { createSeededRandom, GAME_VERSION, hashSeed } from './daily'
 
 export const SHIELD_BOUNCES = 3
+const POWERUP_SEED_VERSION = 3
 
 export const POWERUPS = [
   { id: 'big', name: 'Big ball', description: 'Double the ball size.' },
@@ -19,7 +20,7 @@ export const POWERUPS = [
 export type Powerup = typeof POWERUPS[number]['id']
 
 export function getPowerupChoices(dateKey: string, roundIndex: number, reroll = 0) {
-  const seed = `${GAME_VERSION}:arcade:powerups:${dateKey}:${roundIndex}`
+  const seed = `${GAME_VERSION}:arcade:powerups:v${POWERUP_SEED_VERSION}:${dateKey}:${roundIndex}`
   const random = createSeededRandom(hashSeed(reroll === 0 ? seed : `${seed}:reroll:${reroll}`))
   const pool = [...POWERUPS]
   for (let index = pool.length - 1; index > 0; index--) {
