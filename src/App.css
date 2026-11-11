@@ -597,3 +597,4 @@ header time {
 .leaderboard-table th:last-child, .leaderboard-table td:last-child { text-align: right; padding-right: 0; padding-left: 16px; width: 1%; white-space: nowrap; }
 .leaderboard-you { background: #10301e; }
 .leaderboard-error { margin-bottom: 16px; }
+.build-version { font-size: 0.625rem; opacity: 0.55; white-space: nowrap; }

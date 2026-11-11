@@ -24,7 +24,7 @@ export function HomeScreen() {
         <a className="launch-button" href="#endless">Endless mode</a>
         <a className="launch-button" href="#arcade">Arcade mode</a>
       </nav>
-      <footer className="home-footer">made by <a href="https://arons0n.com" aria-label="arons0n">arons<span className="slashed-zero">0</span>n</a></footer>
+      <footer className="home-footer">made by <a href="https://arons0n.com" aria-label="arons0n">arons<span className="slashed-zero">0</span>n</a><span className="build-version" aria-label={`Build ${__BUILD_COMMIT__}`}> · {__BUILD_COMMIT__}</span></footer>
     </section>
   )
 }
