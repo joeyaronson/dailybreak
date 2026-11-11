@@ -1,7 +1,7 @@
 import { createSeededRandom, GAME_VERSION, hashSeed } from './daily'
 
 export const SHIELD_BOUNCES = 3
-const POWERUP_SEED_VERSION = 3
+const POWERUP_SEED_VERSION = 2
 
 export const POWERUPS = [
   { id: 'big', name: 'Big ball', description: 'Double the ball size.' },
@@ -14,7 +14,7 @@ export const POWERUPS = [
   { id: 'extra', name: 'Extra shots', description: 'Get three extra shots this level.' },
   { id: 'thin', name: 'Thin the herd', description: 'Start the level with 50% fewer bricks.' },
   { id: 'chain', name: 'Chain lightning', description: 'Each brick hit chains to one nearby brick.' },
-  { id: 'blackhole', name: 'Black hole', description: 'Nearby bricks gently attract the ball.' },
+  { id: 'blackhole', name: 'Black hole', description: 'Bricks pull the ball toward them from farther away.' },
 ] as const
 
 export type Powerup = typeof POWERUPS[number]['id']

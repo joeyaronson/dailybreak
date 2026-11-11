@@ -68,9 +68,25 @@ const REVERSE_GRAVITY_ACCELERATION = 65
 const REVERSE_GRAVITY_MAX_SPEED = 24
 const MULTIBALL_SPREAD = 0.18
 const LIGHTNING_RANGE = 2
-const BLACK_HOLE_RANGE = 4
-const BLACK_HOLE_PULL = 12
+const BLACK_HOLE_RANGE = 5
+const BLACK_HOLE_PULL = 24
 const MAX_LIVES = BALLS_PER_ROUND
+const PHYSICS_STEP = 1 / 120
+const FAST_FORWARD_SPEED = 4
+const MIN_BOUNCE_COMPONENT = Math.sin(4 * Math.PI / 180)
+
+function keepBounceMoving(direction: Vector3, normal: Vector3) {
+  // Keep nearly horizontal bounces moving vertically; straight vertical is fine.
+  if (Math.abs(direction.y) < MIN_BOUNCE_COMPONENT) {
+    direction.y = (Math.sign(direction.y) || normal.y || -1) * MIN_BOUNCE_COMPONENT
+    direction.x = (Math.sign(direction.x) || normal.x || 1) * Math.sqrt(1 - direction.y ** 2)
+  }
+}
+
+function reflectBall(direction: Vector3, normal: Vector3) {
+  direction.reflect(normal)
+  keepBounceMoving(direction, normal)
+}
 
 export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, onProgress, hasNextRound, onNextRound, demoMode = false, children, roundLabel, powerup }: BrickGridProps) {
   const paused = useContext(GamePauseContext)
@@ -83,8 +99,11 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
   const ballStartY = -fieldHeight / 2 + 0.75
   const containerRef = useRef<HTMLDivElement>(null)
   const launchRef = useRef<(() => void) | null>(null)
+  const fastForwardRef = useRef<(() => void) | null>(null)
   const [unavailable, setUnavailable] = useState(false)
   const [isFlying, setIsFlying] = useState(false)
+  const [canFastForward, setCanFastForward] = useState(false)
+  const [fastForwarding, setFastForwarding] = useState(false)
   const [lives, setLives] = useState(maxLives)
   const [roundComplete, setRoundComplete] = useState(false)
   const [summaryOpen, setSummaryOpen] = useState(false)
@@ -118,6 +137,8 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       || (initialProgress?.phase === 'returning' && initialProgress.ballsRemaining === 0)
     setUnavailable(false)
     setIsFlying(initialProgress?.phase === 'flying')
+    setCanFastForward(false)
+    setFastForwarding(false)
     setLives(initialProgress?.ballsRemaining ?? maxLives)
     setRoundComplete(restoredComplete)
     setSummaryOpen(false)
@@ -864,7 +885,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
             if (hit.distance > distance) break
             if (hit.bottom || (hit.topExit && topBounces >= 1) || reflections++ > 0) { finished = true; break }
             if (hit.topExit) topBounces++
-            direction.reflect(hit.normal)
+            reflectBall(direction, hit.normal)
             origin.addScaledVector(direction, 0.001)
           }
         }
@@ -891,7 +912,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
             dots.setMatrixAt(count++, dotMatrix)
           }
           origin.addScaledVector(direction, distance)
-          direction.reflect(normal)
+          reflectBall(direction, normal)
           // Start just clear of the surface to avoid hitting the same face again.
           origin.addScaledVector(direction, 0.001)
           nextDot -= distance + 0.001
@@ -973,32 +994,24 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       actor.mesh.position.addScaledVector(actor.direction, distance)
       if (actor.mesh === ball) recordTrail()
     }
-    const animate = (time: number) => {
-      if (pausedRef.current) {
-        lastTime = time
-        animationFrame = requestAnimationFrame(animate)
-        return
-      }
-      if (!flying) {
-        const finishedExit = returnAt !== null && time >= returnAt
-        if (finishedExit) {
-          returnAt = null
-          ball.position.y = ballStartY
-          ball.quaternion.identity()
-          setShieldCharges(shieldCapacity)
-          setIsFlying(false)
-          if (remainingLives === 0) {
-            completed = true
-            setRoundComplete(true)
-          }
-          persist(true)
-        }
-        if ((entering || finishedExit || !reducedMotion.matches || bursts.length > 0) && !document.hidden) render()
-        if (remainingLives > 0 || bursts.length > 0 || returnAt !== null || !reducedMotion.matches) animationFrame = requestAnimationFrame(animate)
-        return
-      }
-      const delta = Math.max(0, Math.min((time - lastTime) / 1000, 0.05))
-      lastTime = time
+    let physicsAccumulator = 0
+    let shotElapsed = 0
+    let fastForwardOffered = false
+    let speeding = false
+    const resetFastForward = () => {
+      physicsAccumulator = 0
+      shotElapsed = 0
+      fastForwardOffered = false
+      speeding = false
+      setCanFastForward(false)
+      setFastForwarding(false)
+    }
+    fastForwardRef.current = () => {
+      if (!flying) return
+      speeding = !speeding
+      setFastForwarding(speeding)
+    }
+    const advancePhysics = (delta: number) => {
       let collided = false
       const destroyBrick = (index: number) => {
         if (destroyed.has(index)) return
@@ -1014,7 +1027,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
         explode(brickEdges, brickLines[index].position, powerup === 'blast' ? '#ff943d' : brickColor, powerup === 'blast' ? '#fff3ce' : brickHighlight, occupied[index].id + 1)
         if (demoMode) replaceDemoBrick(index)
       }
-      // New split balls begin moving next frame; all balls share one shot and combo.
+      // New split balls begin moving next physics step; all balls share one shot and combo.
       for (const actor of [...flightBalls]) {
         if (!actor.active || cleared) continue
         const position = actor.mesh.position
@@ -1097,7 +1110,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
             setRoundComplete(true)
             break
           }
-          if (!(powerup === 'laser' && hit.brickIndex !== undefined)) direction.reflect(hit.normal)
+          if (!(powerup === 'laser' && hit.brickIndex !== undefined)) reflectBall(direction, hit.normal)
           if (powerup === 'split' && actor.splitGeneration < 2 && hit.brickIndex !== undefined) {
             actor.splitGeneration++
             const axis = new Vector3(0, 0, 1)
@@ -1106,6 +1119,8 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
             // Both children must head away from the collision surface.
             if (direction.dot(hit.normal) <= 0) direction.reflect(hit.normal)
             if (otherDirection.dot(hit.normal) <= 0) otherDirection.reflect(hit.normal)
+            keepBounceMoving(direction, hit.normal)
+            keepBounceMoving(otherDirection, hit.normal)
             addBall(position.clone().addScaledVector(otherDirection, 0.002), otherDirection, actor.splitGeneration)
           }
           position.addScaledVector(direction, 0.001)
@@ -1118,12 +1133,54 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
         flying = false
         returnAt = performance.now() + (reducedMotion.matches ? 0 : 700)
       }
+      return collided
+    }
+    const animate = (time: number) => {
+      if (pausedRef.current) {
+        lastTime = time
+        animationFrame = requestAnimationFrame(animate)
+        return
+      }
+      if (!flying) {
+        const finishedExit = returnAt !== null && time >= returnAt
+        if (finishedExit) {
+          returnAt = null
+          ball.position.y = ballStartY
+          ball.quaternion.identity()
+          setShieldCharges(shieldCapacity)
+          setIsFlying(false)
+          if (remainingLives === 0) {
+            completed = true
+            setRoundComplete(true)
+          }
+          persist(true)
+        }
+        if ((entering || finishedExit || !reducedMotion.matches || bursts.length > 0) && !document.hidden) render()
+        if (remainingLives > 0 || bursts.length > 0 || returnAt !== null || !reducedMotion.matches) animationFrame = requestAnimationFrame(animate)
+        return
+      }
+      const elapsed = Math.max(0, (time - lastTime) / 1000)
+      lastTime = time
+      shotElapsed += elapsed
+      if (!demoMode && !fastForwardOffered && shotElapsed >= 5) {
+        fastForwardOffered = true
+        setCanFastForward(true)
+      }
+      physicsAccumulator += Math.min(elapsed, 0.05) * (speeding ? FAST_FORWARD_SPEED : 1)
+      let collided = false
+      // Fast forward runs more identical steps; ball speed and forces stay unchanged.
+      while (physicsAccumulator >= PHYSICS_STEP && flying) {
+        collided = advancePhysics(PHYSICS_STEP) || collided
+        physicsAccumulator -= PHYSICS_STEP
+      }
+      if (!flying) resetFastForward()
       persist(collided)
       render()
       if (flying || remainingLives > 0 || bursts.length > 0 || returnAt !== null || !reducedMotion.matches) animationFrame = requestAnimationFrame(animate)
     }
     launchRef.current = () => {
       if (cleared || entering || flying || returnAt !== null || remainingLives === 0) return
+      resetFastForward()
       remainingLives--
       setLives(remainingLives)
       shotHits = 0
@@ -1313,6 +1370,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       window.removeEventListener('pagehide', saveOnLeave)
       document.removeEventListener('visibilitychange', saveOnHide)
       launchRef.current = null
+      fastForwardRef.current = null
       popupTimers.forEach(clearTimeout)
       shake?.cancel()
       cancelAnimationFrame(animationFrame)
@@ -1386,9 +1444,14 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       <div className="board" style={{ aspectRatio: demoMode ? '1.15' : `${FIELD_WIDTH} / ${fieldHeight}` }}>
         {(roundLabel || !demoMode) && <div className="board-hud">
           {roundLabel && <p className="round-number" role="status">{roundLabel}</p>}
-          {!demoMode && <p className="round-best-combo" aria-label={`Best combo this round: ${bestCombo}`}>
-            Best {bestCombo}x
-          </p>}
+          {!demoMode && <div className="board-combo-tools">
+            <p className="round-best-combo" aria-label={`Best combo this round: ${bestCombo}`}>Best {bestCombo}x</p>
+            {isFlying && !roundComplete && <button
+              className={`fast-forward ${fastForwarding ? 'fast-forward-active' : canFastForward ? 'fast-forward-blinking' : ''}`}
+              type="button" aria-pressed={fastForwarding} onClick={() => fastForwardRef.current?.()}>
+              {fastForwarding ? '4× speed' : 'Fast forward »'}
+            </button>}
+          </div>}
         </div>}
         {(powerup === 'shield' || powerup === 'gravity') && !demoMode && !roundComplete && <p className="board-shield" aria-label={`${shieldCharges} ${powerup === 'gravity' ? 'top' : 'bottom'} bounces remaining`}>
           {powerup === 'gravity' ? 'Top shield' : 'Shield'} {shieldCharges} / {shieldCapacity}
