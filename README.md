@@ -44,6 +44,45 @@ Score tiers: 💎 1,000; 🟪 900–999; 🟦 750–899; 🟩 500–749; 🟨 25
 
 Scoring lives in `src/lib/scoring.ts`. After round three, **View results** shows all round scores and stats with a daily total out of 3,000. **Share** copies three lines: the dated title, all three emoji tiers together, and the total. Copying uses the Clipboard API with an automatic legacy fallback for local-network HTTP previews; no manual copy step is shown. Results persist across reloads.
 
+## Leaderboards
+
+**Zero-cost requirement:** keep this backend on **Workers Free**, which also governs D1's free quotas. Do not enable Workers Paid or paid add-ons for this project. On Free, exhausted request/database quotas make the leaderboard unavailable; they do not become paid overages. Normal gameplay stays available on GitHub Pages. Application rate limits are not a billing cap on a Paid account. Wrangler's OAuth login cannot read the billing subscription, so verify **Workers & Pages → Plans** in the Cloudflare dashboard; a domain's Free plan is a different setting. See [Workers limits](https://developers.cloudflare.com/workers/platform/limits/#daily-requests) and [D1 free quota behavior](https://developers.cloudflare.com/d1/platform/pricing/#what-happens-if-i-exceed-the-daily-limits-on-reads-and-writes-or-the-total-storage-limit-on-the-free-plan).
+
+Each mode has its own leaderboard for the game's local calendar date. Players submit a nickname on the results screen without signing in. Daily accepts one result per browser ID and date; Endless and Arcade keep that browser's best score for the date. The top 20 and the player's own rank are shown, with equal scores sharing a rank.
+
+Nicknames are limited to 10 characters. The form and API share an English profanity/slur filter that checks common disguised spellings; names must contain a letter or number and use only letters, numbers, spaces, or basic punctuation. The database enforces the length limit too. The nickname migration shortens legacy names without changing their scores, and inappropriate legacy names display as "Player".
+
+GitHub Pages still hosts the game. A separate Cloudflare Worker and D1 database handle scores. The Worker recalculates totals from validated round statistics, accounts for Arcade powerups, limits requests, and keeps only compact score records for 30 days. Browser IDs are not authentication, and submitted stats are not a verified gameplay replay; this is a casual leaderboard.
+
+Local development:
+
+```sh
+npm run leaderboard:migrate:local
+npm run leaderboard:dev
+```
+
+In another terminal, set `VITE_LEADERBOARD_URL=http://localhost:8787` in `.env.development.local`, then run `npm run dev`. Local D1 data stays separate from production.
+
+Cloudflare setup (an existing deployment already has the database ID in `worker/wrangler.jsonc`):
+
+```sh
+npx wrangler login
+npx wrangler d1 create dailybreak-scores --config worker/wrangler.jsonc
+```
+
+For a new account, put the returned `database_id` in `worker/wrangler.jsonc`, then:
+
+```sh
+npm run leaderboard:migrate
+npm run leaderboard:deploy
+```
+
+Set `VITE_LEADERBOARD_URL` in `.env.production` to the returned `https://dailybreak-leaderboard.<subdomain>.workers.dev` address and rebuild the frontend. This is a public endpoint, not a secret. No Cloudflare tokens belong in frontend environment variables. The configured allowed origins include the production site and localhost development URLs; add another development origin explicitly if needed.
+
+Backend routes are `GET /daily?date=YYYY-MM-DD&browserId=...` and `POST /daily`, with equivalent `/endless` and `/arcade` routes. POST includes `dateKey`, `gameVersion`, `browserId`, `nickname`, and each round's `ballsRemaining`, `bricksRemaining`, and `bestCombo`; Arcade also includes the selected `powerups` array. A duplicate Daily submission returns the original entry, so retrying after a network failure is safe. Endless/Arcade update only when the submitted run is better. Runs are limited to 1,000 rounds per submission. Writes accept current local dates worldwide (UTC date ±1 day).
+
+Cloudflare setup references: [D1](https://developers.cloudflare.com/d1/get-started/), [rate limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/).
+
 ## Development
 
 Use Node.js 22.18+ (or a current LTS).

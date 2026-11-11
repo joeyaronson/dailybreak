@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 HANDOFF.md
+.wrangler/
+.dev.vars*
 
 # Editor directories and files
 .history/

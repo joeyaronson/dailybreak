@@ -582,3 +582,18 @@ header time {
 .powerup-option small { font: inherit; font-size: 0.75rem; line-height: 1.4; }
 .powerup-shop { display: grid; gap: 8px; margin-top: 12px; }
 .powerup-shop p { margin: 0; font-size: 0.8125rem; }
+.daily-leaderboard { margin-top: 28px; padding-top: 20px; border-top: 1px solid #193c29; }
+.daily-leaderboard h2 { margin: 0 0 16px; font-size: 1.125rem; font-weight: 400; }
+.daily-leaderboard p { font-size: 0.875rem; line-height: 1.5; }
+.leaderboard-form { display: grid; gap: 10px; margin-bottom: 20px; }
+.leaderboard-form label { font-size: 0.8125rem; }
+.leaderboard-form input { width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid #bdffd3; border-radius: 0; background: #07130c; color: inherit; font: inherit; font-size: 1rem; text-shadow: inherit; }
+.leaderboard-form input:focus { outline: none; border-color: #e0ffeb; }
+.leaderboard-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+.leaderboard-table th { font-weight: 400; white-space: nowrap; }
+.leaderboard-table th, .leaderboard-table td { padding: 10px 6px; border-bottom: 1px solid #193c29; text-align: left; }
+.leaderboard-table td:nth-child(2) { overflow-wrap: anywhere; }
+.leaderboard-table th:first-child, .leaderboard-table td:first-child { padding-left: 0; padding-right: 16px; width: 1%; white-space: nowrap; }
+.leaderboard-table th:last-child, .leaderboard-table td:last-child { text-align: right; padding-right: 0; padding-left: 16px; width: 1%; white-space: nowrap; }
+.leaderboard-you { background: #10301e; }
+.leaderboard-error { margin-bottom: 16px; }

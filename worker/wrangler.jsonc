@@ -1,0 +1,24 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "dailybreak-leaderboard",
+  "account_id": "6b1ee38fe5a9aa19ecc5814c005ea57c",
+  "main": "index.ts",
+  "compatibility_date": "2026-11-11",
+  // Workers Free confirmed: quota exhaustion must stop service, never upgrade the plan.
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "ALLOWED_ORIGINS": "https://dailybreak.arons0n.com,https://joeyaronson.github.io,http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173"
+  },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "dailybreak-scores",
+    "database_id": "dd3113a4-88ac-4cc2-93f9-02287d1be656",
+    "migrations_dir": "migrations"
+  }],
+  "ratelimits": [
+    { "name": "READ_LIMITER", "namespace_id": "11801", "simple": { "limit": 120, "period": 60 } },
+    { "name": "SUBMIT_LIMITER", "namespace_id": "11802", "simple": { "limit": 20, "period": 60 } }
+  ],
+  "triggers": { "crons": ["0 4 * * *"] }
+}
