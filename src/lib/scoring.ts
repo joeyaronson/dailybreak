@@ -50,11 +50,11 @@ export function formatShareResults(dateKey: string, results: readonly RoundResul
   ].join('\n')
 }
 
-export function formatEndlessShareResults(dateKey: string, results: readonly RoundResult[]) {
+export function formatEndlessShareResults(dateKey: string, results: readonly RoundResult[], mode: 'endless' | 'arcade' = 'endless') {
   const total = results.reduce((sum, round) => sum + round.total, 0)
   const cleared = results.filter((round) => round.bricksRemaining === 0).length
   return [
-    `Dailybreak · Endless · ${dateKey}`,
+    `Dailybreak · ${mode === 'arcade' ? 'Arcade' : 'Endless'} · ${dateKey}`,
     results.map((round) => round.emoji).join(''),
     `${total} points · ${cleared} rounds cleared`,
   ].join('\n')

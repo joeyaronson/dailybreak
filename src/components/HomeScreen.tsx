@@ -22,6 +22,7 @@ export function HomeScreen() {
       <nav className="mode-options" aria-label="Game modes">
         <a className="launch-button" href="#daily">Daily mode</a>
         <a className="launch-button" href="#endless">Endless mode</a>
+        <a className="launch-button" href="#arcade">Arcade mode</a>
       </nav>
       <footer className="home-footer">made by <a href="https://arons0n.com" aria-label="arons0n">arons<span className="slashed-zero">0</span>n</a></footer>
     </section>

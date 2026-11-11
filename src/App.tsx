@@ -11,6 +11,9 @@ import { HomeScreen } from './components/HomeScreen'
 import { EndlessMode } from './components/EndlessMode'
 import { BallIndicator } from './components/BallIndicator'
 import { ModeIntro } from './components/ModeIntro'
+import type { Mode } from './components/ModeIntro'
+import { HelpDialog } from './components/HelpDialog'
+import { GamePauseContext } from './lib/gamePause'
 import './App.css'
 
 const ROUND_COLORS = ['#ff5cde', '#2266ff', '#ffe65c']
@@ -93,14 +96,16 @@ function DailySession({ rounds, dateKey }: DailyRoundsProps) {
   )
 }
 
-const currentMode = () => window.location.hash === '#daily' ? 'daily'
-  : window.location.hash === '#endless' ? 'endless' : 'home'
+const currentMode = (): Mode | 'home' => window.location.hash === '#daily' ? 'daily'
+  : window.location.hash === '#endless' ? 'endless'
+  : window.location.hash === '#arcade' ? 'arcade' : 'home'
 
 function App() {
   const { dateKey, rounds } = useDailyGame()
   const [mode, setMode] = useState(currentMode)
+  const [helpOpen, setHelpOpen] = useState(false)
   useEffect(() => {
-    const navigate = () => setMode(currentMode())
+    const navigate = () => { setMode(currentMode()); setHelpOpen(false) }
     window.addEventListener('hashchange', navigate)
     return () => window.removeEventListener('hashchange', navigate)
   }, [])
@@ -112,12 +117,19 @@ function App() {
         </a>
         <div className="header-tools">
           <time dateTime={dateKey}>{dateKey}</time>
-          {mode !== 'home' && <a className="home-link" href="#">Home</a>}
+          {mode !== 'home' && <nav className="header-actions" aria-label="Game navigation">
+            <button className="home-link help-button" type="button" onClick={() => setHelpOpen(true)}>Help</button>
+            <a className="home-link" href="#">Home</a>
+          </nav>}
         </div>
       </header>
+      <GamePauseContext value={helpOpen}>
       {mode === 'home' && <HomeScreen />}
       {mode === 'daily' && <ModeIntro key="daily" mode="daily"><DailySession key={dateKey} rounds={rounds} dateKey={dateKey} /></ModeIntro>}
       {mode === 'endless' && <ModeIntro key="endless" mode="endless"><EndlessMode dateKey={dateKey} /></ModeIntro>}
+      {mode === 'arcade' && <ModeIntro key="arcade" mode="arcade"><EndlessMode mode="arcade" dateKey={dateKey} /></ModeIntro>}
+      </GamePauseContext>
+      {mode !== 'home' && <HelpDialog key={mode} mode={mode} open={helpOpen} onDismiss={() => setHelpOpen(false)} />}
     </main>
   )
 }

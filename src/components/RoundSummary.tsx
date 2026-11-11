@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CSSProperties } from 'react'
 import type { RoundScore } from '../lib/scoring'
 import { BALLS_PER_ROUND } from '../lib/daily'
 import { BallIndicator } from './BallIndicator'
+import { ModalOutline } from './ModalOutline'
 
 type RoundSummaryProps = {
   open: boolean
   ballsRemaining: number
+  totalBalls?: number
   bricksRemaining: number
   brickColor: string
   bestCombo: number
@@ -16,10 +17,9 @@ type RoundSummaryProps = {
   onClose: () => void
 }
 
-export function RoundSummary({ open, ballsRemaining, bricksRemaining, brickColor, bestCombo, score, hasNextRound, onNextRound, onClose }: RoundSummaryProps) {
+export function RoundSummary({ open, ballsRemaining, totalBalls = BALLS_PER_ROUND, bricksRemaining, brickColor, bestCombo, score, hasNextRound, onNextRound, onClose }: RoundSummaryProps) {
   const actionRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
-  const [size, setSize] = useState({ width: 300, height: 240 })
   const [displayedBricks, setDisplayedBricks] = useState(0)
   const [revealedBalls, setRevealedBalls] = useState(0)
 
@@ -49,25 +49,13 @@ export function RoundSummary({ open, ballsRemaining, bricksRemaining, brickColor
   useEffect(() => {
     if (!open) return
     const previous = document.activeElement
-    const panel = panelRef.current
-    const observer = new ResizeObserver(() => {
-      if (!panel) return
-      const { width, height } = panel.getBoundingClientRect()
-      setSize((previous) => previous.width === width && previous.height === height ? previous : { width, height })
-    })
-    if (panel) observer.observe(panel)
     actionRef.current?.focus({ preventScroll: true })
     return () => {
-      observer.disconnect()
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true })
     }
   }, [open])
 
   if (!open) return null
-  const right = size.width - 0.5
-  const bottom = size.height - 0.5
-  const perimeter = 2 * (size.width + size.height - 2)
-  const firstCorner = (size.width - 1) / perimeter
 
   return (
     <div className="round-summary-overlay">
@@ -81,14 +69,7 @@ export function RoundSummary({ open, ballsRemaining, bricksRemaining, brickColor
             onClose()
           }
         }}>
-        <svg key={`${size.width}-${size.height}`} className="summary-outline" viewBox={`0 0 ${size.width} ${size.height}`} aria-hidden="true">
-          <path className="summary-border" d={`M 0.5 0.5 H ${right} V ${bottom} H 0.5 Z`}
-            style={{ strokeDasharray: `${perimeter} ${perimeter}`, '--outline-length': perimeter } as CSSProperties} />
-          <line className="summary-beam" x1="-120" y1={size.height / 2} x2="0.5" y2="0.5">
-            <animate attributeName="x2" values={`0.5;${right};${right};0.5;0.5`} keyTimes={`0;${firstCorner};0.5;${0.5 + firstCorner};1`} dur="0.7s" fill="freeze" />
-            <animate attributeName="y2" values={`0.5;0.5;${bottom};${bottom};0.5`} keyTimes={`0;${firstCorner};0.5;${0.5 + firstCorner};1`} dur="0.7s" fill="freeze" />
-          </line>
-        </svg>
+        <ModalOutline />
         <div className="summary-content">
           <h2 id="round-summary-title">{hasNextRound ? 'Round complete' : 'Game complete'}</h2>
           <p className="round-score" aria-label={`Round score: ${score.total} out of 1000`}>
@@ -99,8 +80,8 @@ export function RoundSummary({ open, ballsRemaining, bricksRemaining, brickColor
             <div>
               <dt>Balls remaining</dt>
               <dd className="summary-balls">
-                <span className="sr-only">{ballsRemaining} of {BALLS_PER_ROUND}</span>
-                {Array.from({ length: BALLS_PER_ROUND }, (_, index) => (
+                <span className="sr-only">{ballsRemaining} of {totalBalls}</span>
+                {Array.from({ length: totalBalls }, (_, index) => (
                   <BallIndicator key={index} available={index < revealedBalls} animateIn />
                 ))}
               </dd>

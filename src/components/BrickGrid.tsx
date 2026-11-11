@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   AdditiveBlending,
@@ -8,6 +8,7 @@ import {
   EdgesGeometry,
   InstancedMesh,
   LineBasicMaterial,
+  LineLoop,
   LineSegments,
   Matrix4,
   Mesh,
@@ -36,9 +37,14 @@ import { BallIndicator } from './BallIndicator'
 import { calculateRoundScore } from '../lib/scoring'
 import type { RoundResult, ScoreTargets } from '../lib/scoring'
 import type { RoundProgress } from '../lib/progress'
+import { SHIELD_BOUNCES } from '../lib/powerups'
+import type { Powerup } from '../lib/powerups'
+import { createPowerupEffect, POWERUP_COLORS } from '../lib/powerupEffects'
+import { GamePauseContext } from '../lib/gamePause'
 
 type BrickGridProps = {
   roundLabel?: string
+  powerup?: Powerup
   demoMode?: boolean
   children?: ReactNode
   initialProgress: RoundProgress | null
@@ -57,20 +63,34 @@ const FIELD_HEIGHT = GRID_SIZE * CELL_HEIGHT + PADDING * 2 + 5.5
 const BALL_RADIUS = 0.16
 const WALL_HEIGHT = 0.6
 const BALL_SPEED = 15
+// Turn a full-speed downward ball within about 4.4 units, above the bottom exit.
+const REVERSE_GRAVITY_ACCELERATION = 65
+const REVERSE_GRAVITY_MAX_SPEED = 24
+const MULTIBALL_SPREAD = 0.18
+const LIGHTNING_RANGE = 2
+const BLACK_HOLE_RANGE = 4
+const BLACK_HOLE_PULL = 12
 const MAX_LIVES = BALLS_PER_ROUND
 
-export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, onProgress, hasNextRound, onNextRound, demoMode = false, children, roundLabel }: BrickGridProps) {
+export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, onProgress, hasNextRound, onNextRound, demoMode = false, children, roundLabel, powerup }: BrickGridProps) {
+  const paused = useContext(GamePauseContext)
+  const pausedRef = useRef(paused)
+  useEffect(() => { pausedRef.current = paused }, [paused])
+  const shieldCapacity = powerup === 'gravity' ? 1 : SHIELD_BOUNCES
+  const ballRadius = BALL_RADIUS * (powerup === 'big' ? 2 : 1)
+  const maxLives = MAX_LIVES + (powerup === 'extra' ? 3 : 0)
   const fieldHeight = demoMode ? GRID_SIZE * CELL_HEIGHT + PADDING * 2 + 3.75 : FIELD_HEIGHT
   const ballStartY = -fieldHeight / 2 + 0.75
   const containerRef = useRef<HTMLDivElement>(null)
   const launchRef = useRef<(() => void) | null>(null)
   const [unavailable, setUnavailable] = useState(false)
   const [isFlying, setIsFlying] = useState(false)
-  const [lives, setLives] = useState(MAX_LIVES)
+  const [lives, setLives] = useState(maxLives)
   const [roundComplete, setRoundComplete] = useState(false)
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [bricksRemaining, setBricksRemaining] = useState(() => bricks.filter((brick) => brick.occupied).length)
   const [bestCombo, setBestCombo] = useState(0)
+  const [shieldCharges, setShieldCharges] = useState<number>(shieldCapacity)
   const [hitPopups, setHitPopups] = useState<{ id: number; count: number; x: number; y: number }[]>([])
   const [isEntering, setIsEntering] = useState(true)
 
@@ -98,11 +118,12 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       || (initialProgress?.phase === 'returning' && initialProgress.ballsRemaining === 0)
     setUnavailable(false)
     setIsFlying(initialProgress?.phase === 'flying')
-    setLives(initialProgress?.ballsRemaining ?? MAX_LIVES)
+    setLives(initialProgress?.ballsRemaining ?? maxLives)
     setRoundComplete(restoredComplete)
     setSummaryOpen(false)
     setBricksRemaining(bricks.filter((brick) => brick.occupied).length - (initialProgress?.destroyedBricks.length ?? 0))
     setHitPopups([])
+    setShieldCharges(shieldCapacity)
     let bestComboValue = initialProgress?.bestCombo ?? 0
     setBestCombo(bestComboValue)
     let shotHits = initialProgress?.shotHits ?? 0
@@ -161,7 +182,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
         wallPoints.push(new Vector3(x, y, floorZ), new Vector3(x, y, wallTop))
       }
     }
-    wallPoints.push(
+    if (powerup !== 'gravity') wallPoints.push(
       new Vector3(-FIELD_WIDTH / 2, fieldHeight / 2, wallTop),
       new Vector3(FIELD_WIDTH / 2, fieldHeight / 2, wallTop),
     )
@@ -173,7 +194,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
     baseEdges.dispose()
     const tableMaterial = new LineBasicMaterial({ color: '#49d77e' })
     const table = new LineSegments(tableEdges, tableMaterial)
-    table.position.z = -BALL_RADIUS - 0.09
+    table.position.z = -ballRadius - 0.09
     scene.add(table)
 
     const geometry = new BoxGeometry(0.92, CELL_HEIGHT - 0.08, 0.3)
@@ -193,7 +214,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
     const brickFaces = new InstancedMesh(geometry, brickFaceMaterial, occupied.length)
     scene.add(brickFaces)
     // Expand brick bounds by the ball radius for swept collision detection.
-    const collisionGeometry = new BoxGeometry(0.92 + BALL_RADIUS * 2, CELL_HEIGHT - 0.08 + BALL_RADIUS * 2, 1)
+    const collisionGeometry = new BoxGeometry(0.92 + ballRadius * 2, CELL_HEIGHT - 0.08 + ballRadius * 2, 1)
     const collider = new InstancedMesh(collisionGeometry, material, occupied.length)
     const destroyed = new Set<number>()
     const savedDestroyed = new Set(initialProgress?.destroyedBricks ?? [])
@@ -256,8 +277,8 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       demoDrops.forEach((drop, index) => {
         const progress = reducedMotion.matches ? 1 : Math.min(1, (now - drop.started) / 650)
         const position = brickLines[index].position
-        const ballUnderneath = Math.abs(position.x - ball.position.x) < 0.46 + BALL_RADIUS
-          && Math.abs(position.y - ball.position.y) < (CELL_HEIGHT - 0.08) / 2 + BALL_RADIUS
+        const ballUnderneath = Math.abs(position.x - ball.position.x) < 0.46 + ballRadius
+          && Math.abs(position.y - ball.position.y) < (CELL_HEIGHT - 0.08) / 2 + ballRadius
         position.z = progress < 0.8
           ? drop.height * (1 - (progress / 0.8) ** 2)
           : Math.sin((progress - 0.8) / 0.2 * Math.PI) * 0.08
@@ -275,7 +296,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
         brickFaces.frustumCulled = true
       }
     }
-    const ballGeometry = new SphereGeometry(BALL_RADIUS, 12, 8)
+    const ballGeometry = new SphereGeometry(ballRadius, 12, 8)
     const ballEdges = new EdgesGeometry(ballGeometry)
     const ballVertices = ballEdges.getAttribute('position')
     const ballFragments: Vector3[] = []
@@ -284,16 +305,17 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       ballFragments.push(new Vector3().fromBufferAttribute(ballVertices, vertex), new Vector3().fromBufferAttribute(ballVertices, vertex + 1))
     }
     const ballBurstGeometry = new BufferGeometry().setFromPoints(ballFragments)
-    const ballMaterial = new MeshBasicMaterial({ color: '#bdffd3', wireframe: true })
+    const ballColor = powerup ? POWERUP_COLORS[powerup] : '#bdffd3'
+    const ballMaterial = new MeshBasicMaterial({ color: ballColor, wireframe: true })
     const ball = new Mesh(ballGeometry, ballMaterial)
     ball.position.set(
       initialProgress?.ball.x ?? 0,
       initialProgress?.phase === 'flying'
-        ? Math.max(-fieldHeight / 2 + BALL_RADIUS + 0.001, Math.min(fieldHeight / 2 - BALL_RADIUS - 0.001, initialProgress.ball.y))
+        ? Math.max(-fieldHeight / 2 + ballRadius + 0.001, Math.min(fieldHeight / 2 - ballRadius - 0.001, initialProgress.ball.y))
         : ballStartY,
       0,
     )
-    const ballTraceMaterial = new LineBasicMaterial({ color: '#bdffd3' })
+    const ballTraceMaterial = new LineBasicMaterial({ color: ballColor })
     const ballTrace = new LineSegments(ballEdges, ballTraceMaterial)
     ball.add(ballTrace)
     scene.add(ball)
@@ -320,8 +342,8 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
     ball.add(leftArrow, rightArrow)
 
     const dotGeometry = new SphereGeometry(0.035, 8, 6)
-    const dotMaterial = new MeshBasicMaterial({ color: '#55ff91' })
-    const maxDots = 200
+    const dotMaterial = new MeshBasicMaterial({ color: powerup ? ballColor : '#55ff91' })
+    const maxDots = powerup === 'multi' ? 600 : 200
     const dots = new InstancedMesh(dotGeometry, dotMaterial, maxDots)
     dots.frustumCulled = false
     scene.add(dots)
@@ -332,17 +354,33 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
     let cleared = destroyed.size === occupied.length
     let completed = restoredComplete
     let returnAt: number | null = null
-    let remainingLives = initialProgress?.ballsRemaining ?? MAX_LIVES
+    let remainingLives = initialProgress?.ballsRemaining ?? maxLives
     let animationFrame = 0
     const flightDirection = new Vector3(initialProgress?.direction.x ?? 0, initialProgress?.direction.y ?? 1, 0)
-    const trace = (origin: Vector3, direction: Vector3) => {
+    const makeEffect = () => {
+      if (!powerup) return undefined
+      const effect = createPowerupEffect(powerup, ballRadius)
+      scene.add(effect.group)
+      return effect
+    }
+    type FlightBall = { mesh: typeof ball; direction: Vector3; active: boolean; splitGeneration: number; bottomBounces: number; topBounces: number; effect?: ReturnType<typeof createPowerupEffect> }
+    const flightBalls: FlightBall[] = [{ mesh: ball, direction: flightDirection, active: flying, splitGeneration: 0, bottomBounces: 0, topBounces: 0, effect: makeEffect() }]
+    const addBall = (position: Vector3, direction: Vector3, splitGeneration = 0) => {
+      const mesh = new Mesh(ballGeometry, ballMaterial)
+      mesh.position.copy(position)
+      scene.add(mesh)
+      const actor: FlightBall = { mesh, direction: direction.clone(), active: true, splitGeneration, bottomBounces: 0, topBounces: 0, effect: makeEffect() }
+      flightBalls.push(actor)
+      return actor
+    }
+    const trace = (origin: Vector3, direction: Vector3, ignoreBricks = false) => {
       const normal = new Vector3(0, -Math.sign(direction.y), 0)
       let bottom = direction.y < 0 && !demoMode
       let brickIndex: number | undefined
       let distance = direction.y === 0 ? Infinity
-        : (Math.sign(direction.y) * (fieldHeight / 2 - BALL_RADIUS) - origin.y) / direction.y
+        : (Math.sign(direction.y) * (fieldHeight / 2 - ballRadius) - origin.y) / direction.y
       if (direction.x !== 0) {
-        const sideDistance = (Math.sign(direction.x) * (FIELD_WIDTH / 2 - BALL_RADIUS) - origin.x) / direction.x
+        const sideDistance = (Math.sign(direction.x) * (FIELD_WIDTH / 2 - ballRadius) - origin.x) / direction.x
         if (sideDistance < distance) {
           distance = sideDistance
           normal.set(-Math.sign(direction.x), 0, 0)
@@ -350,7 +388,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
         }
       }
       raycaster.set(origin, direction)
-      const hit = raycaster.intersectObject(collider, false)
+      const hit = (ignoreBricks ? [] : raycaster.intersectObject(collider, false))
         .find((hit) => hit.instanceId !== undefined && !destroyed.has(hit.instanceId) && !demoDrops.has(hit.instanceId))
       if (hit?.face && hit.distance < distance) {
         distance = hit.distance
@@ -358,10 +396,41 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
         brickIndex = hit.instanceId
         bottom = false
       }
-      return { distance, normal, brickIndex, bottom }
+      const topExit = powerup === 'gravity' && brickIndex === undefined && normal.y === -1
+      return { distance, normal, brickIndex, bottom, topExit }
+    }
+    const steerTowardBricks = (position: Vector3, direction: Vector3, delta: number) => {
+      let target: Vector3 | undefined
+      let nearest = BLACK_HOLE_RANGE
+      brickLines.forEach((brick, index) => {
+        if (destroyed.has(index)) return
+        const distance = brick.position.distanceTo(position)
+        if (distance < nearest) { nearest = distance; target = brick.position }
+      })
+      if (!target) return
+      const pull = BLACK_HOLE_PULL * (1 - nearest / BLACK_HOLE_RANGE)
+      direction.addScaledVector(target.clone().sub(position).normalize(), pull * delta / BALL_SPEED).normalize()
     }
 
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    let lastShieldHit = -Infinity
+    const shieldGeometry = new BufferGeometry().setFromPoints([
+      new Vector3(-FIELD_WIDTH / 2 + 0.1, 0, 0), new Vector3(FIELD_WIDTH / 2 - 0.1, 0, 0),
+      ...Array.from({ length: 20 }, (_, index) => {
+        const x = -FIELD_WIDTH / 2 + 0.2 + index * (FIELD_WIDTH - 0.4) / 19
+        return [new Vector3(x - 0.08, -0.07, 0), new Vector3(x + 0.08, 0.07, 0)]
+      }).flat(),
+    ])
+    const shields = powerup === 'shield' || powerup === 'gravity' ? Array.from({ length: shieldCapacity }, (_, index) => {
+      const shieldMaterial = new LineBasicMaterial({
+        color: ballColor, transparent: true, opacity: 0.75,
+        blending: AdditiveBlending, depthWrite: false,
+      })
+      const shield = new LineSegments(shieldGeometry, shieldMaterial)
+      shield.position.set(0, powerup === 'gravity' ? fieldHeight / 2 - ballRadius : -fieldHeight / 2 + ballRadius + index * 0.16, 0.02)
+      scene.add(shield)
+      return shield
+    }) : []
     let entering = !demoMode && !initialProgress && !reducedMotion.matches
     let drawing = entering
     setIsEntering(entering)
@@ -426,7 +495,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
     }
     const afterimages = Array.from({ length: 8 }, () => {
       const material = new MeshBasicMaterial({
-        color: '#8bffb2', wireframe: true, transparent: true,
+        color: powerup ? ballColor : '#8bffb2', wireframe: true, transparent: true,
         opacity: 0, blending: AdditiveBlending, depthWrite: false,
       })
       const ghost = new Mesh(ballGeometry, material)
@@ -562,6 +631,14 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       duration: number
     }
     const bursts: Burst[] = []
+    const shockwaveGeometry = new BufferGeometry().setFromPoints(Array.from({ length: 64 }, (_, index) => {
+      const angle = index / 64 * Math.PI * 2
+      return new Vector3(Math.cos(angle), Math.sin(angle), 0)
+    }))
+    const shockwaves: { rings: LineLoop<BufferGeometry, LineBasicMaterial>[]; started: number }[] = []
+    const disposeShockwave = (wave: typeof shockwaves[number]) => {
+      wave.rings.forEach((ring) => { scene.remove(ring); ring.material.dispose() })
+    }
     const disposeBurst = (burst: Burst) => {
       scene.remove(burst.lines, burst.points)
       burst.geometry.dispose()
@@ -603,7 +680,78 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       bursts.push({ lines, points, geometry: burstGeometry, lineMaterial, pointMaterial, fragments, started: performance.now(), duration: 0.7 })
     }
     let impactCount = 0
-    const sparkImpact = (normal: Vector3) => {
+    const lightningImpact = (path: Vector3[]) => {
+      if (reducedMotion.matches) return
+      const random = createSeededRandom(++impactCount)
+      const fragments: Burst['fragments'] = []
+      for (let link = 1; link < path.length; link++) {
+        const start = path[link - 1]
+        const end = path[link]
+        const tangent = new Vector3(-(end.y - start.y), end.x - start.x, 0).normalize()
+        let previous = start.clone()
+        previous.z += 0.2
+        for (let step = 1; step <= 10; step++) {
+          const next = start.clone().lerp(end, step / 10)
+          if (step < 10) next.addScaledVector(tangent, (random() - 0.5) * 0.35)
+          next.z += 0.2
+          fragments.push({ center: previous.clone().add(next).multiplyScalar(0.5),
+            halfEdge: previous.clone().sub(next).multiplyScalar(0.5), velocity: new Vector3(),
+            axis: new Vector3(0, 0, 1), spin: 0 })
+          previous = next
+        }
+      }
+      const geometry = new BufferGeometry().setFromPoints(fragments.flatMap((fragment) => [
+        fragment.center.clone().add(fragment.halfEdge), fragment.center.clone().sub(fragment.halfEdge),
+      ]))
+      const lineMaterial = new LineBasicMaterial({ color: POWERUP_COLORS.chain, transparent: true,
+        blending: AdditiveBlending, depthTest: false, depthWrite: false })
+      const pointMaterial = new PointsMaterial({ color: '#efffff', size: 0.07, transparent: true,
+        blending: AdditiveBlending, depthTest: false, depthWrite: false })
+      const lines = new LineSegments(geometry, lineMaterial)
+      const points = new Points(geometry, pointMaterial)
+      lines.frustumCulled = points.frustumCulled = false
+      scene.add(lines, points)
+      bursts.push({ lines, points, geometry, lineMaterial, pointMaterial, fragments, started: performance.now(), duration: 0.4 })
+    }
+    const blastImpact = (position: Vector3) => {
+      if (reducedMotion.matches) return
+      const rings = ['#fff3ce', '#ff943d', '#ff5252'].map((color) => {
+        const ring = new LineLoop(shockwaveGeometry, new LineBasicMaterial({
+          color, transparent: true, blending: AdditiveBlending, depthTest: false, depthWrite: false,
+        }))
+        ring.position.copy(position)
+        ring.position.z += 0.2
+        ring.scale.setScalar(0.06)
+        ring.renderOrder = 4
+        scene.add(ring)
+        return ring
+      })
+      shockwaves.push({ rings, started: performance.now() })
+      const random = createSeededRandom(++impactCount)
+      const fragments: Burst['fragments'] = Array.from({ length: 32 }, (_, index) => {
+        const angle = (index + random() * 0.5) / 32 * Math.PI * 2
+        const outward = new Vector3(Math.cos(angle), Math.sin(angle), 0)
+        return {
+          center: outward.clone().multiplyScalar(0.1),
+          halfEdge: outward.clone().multiplyScalar(0.08 + random() * 0.1),
+          velocity: outward.clone().multiplyScalar(4 + random() * 4).add(new Vector3(0, 0, 0.8 + random())),
+          axis: new Vector3(0, 0, 1), spin: (random() - 0.5) * 3,
+        }
+      })
+      const geometry = new BufferGeometry().setFromPoints(fragments.flatMap((fragment) => [
+        fragment.center.clone().add(fragment.halfEdge), fragment.center.clone().sub(fragment.halfEdge),
+      ]))
+      const lineMaterial = new LineBasicMaterial({ color: '#ff943d', transparent: true, blending: AdditiveBlending, depthWrite: false })
+      const pointMaterial = new PointsMaterial({ color: '#fff3ce', size: 0.12, transparent: true, blending: AdditiveBlending, depthWrite: false })
+      const lines = new LineSegments(geometry, lineMaterial)
+      const points = new Points(geometry, pointMaterial)
+      lines.position.copy(position)
+      points.position.copy(position)
+      lines.frustumCulled = points.frustumCulled = false
+      scene.add(lines, points)
+      bursts.push({ lines, points, geometry, lineMaterial, pointMaterial, fragments, started: performance.now(), duration: 0.75 })
+    }
+    const sparkImpact = (normal: Vector3, position = ball.position) => {
       if (reducedMotion.matches) return
       const random = createSeededRandom(++impactCount)
       const tangent = new Vector3(-normal.y, normal.x, 0)
@@ -626,7 +774,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       const pointMaterial = new PointsMaterial({ color: '#bdffd3', size: 0.09, transparent: true, depthWrite: false })
       const lines = new LineSegments(sparkGeometry, lineMaterial)
       const points = new Points(sparkGeometry, pointMaterial)
-      lines.position.copy(ball.position).addScaledVector(normal, -BALL_RADIUS)
+      lines.position.copy(position).addScaledVector(normal, -ballRadius)
       points.position.copy(lines.position)
       lines.frustumCulled = points.frustumCulled = false
       scene.add(lines, points)
@@ -635,6 +783,21 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
     const fragmentCenter = new Vector3()
     const fragmentHalfEdge = new Vector3()
     const updateBursts = () => {
+      for (let index = shockwaves.length - 1; index >= 0; index--) {
+        const wave = shockwaves[index]
+        const age = (performance.now() - wave.started) / 1000
+        if (age >= 0.65 || reducedMotion.matches) {
+          disposeShockwave(wave)
+          shockwaves.splice(index, 1)
+          continue
+        }
+        wave.rings.forEach((ring, ringIndex) => {
+          const progress = Math.max(0, Math.min(1, (age - ringIndex * 0.055) / 0.5))
+          // The outer wave reaches the actual blast radius.
+          ring.scale.setScalar(0.06 + (1.25 - ringIndex * 0.12 - 0.06) * (1 - (1 - progress) ** 3))
+          ring.material.opacity = progress > 0 ? (1 - progress) ** 1.5 : 0
+        })
+      }
       for (let index = bursts.length - 1; index >= 0; index--) {
         const burst = bursts[index]
         const age = (performance.now() - burst.started) / 1000
@@ -670,25 +833,69 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       const direction = aimDirection.clone()
       const spacing = 0.22
       const phase = reducedMotion.matches ? 0 : (performance.now() / 1000 * 0.55) % spacing
-      let nextDot = BALL_RADIUS + 0.15 + phase
+      let nextDot = ballRadius + 0.15 + phase
       let count = 0
-      // Two segments: the initial path and the path after its first reflection.
-      for (let segment = 0; segment < 2; segment++) {
-        const { distance, normal } = trace(origin, direction)
-        if (!Number.isFinite(distance) || distance < 0) break
-        for (; nextDot < distance && count < maxDots; nextDot += spacing) {
-          dotMatrix.makeTranslation(
-            origin.x + direction.x * nextDot,
-            origin.y + direction.y * nextDot,
-            0,
-          )
-          dots.setMatrixAt(count++, dotMatrix)
+      if (powerup === 'gravity' || powerup === 'blackhole') {
+        let speed = BALL_SPEED
+        let reflections = 0
+        let topBounces = 0
+        let finished = false
+        // Use the same steering and swept collisions as live flight.
+        for (let step = 0; step < 160 && !finished && count < maxDots; step++) {
+          if (powerup === 'gravity') {
+            direction.multiplyScalar(speed)
+            direction.y += REVERSE_GRAVITY_ACCELERATION / 120
+            speed = Math.min(direction.length(), REVERSE_GRAVITY_MAX_SPEED)
+            direction.normalize()
+          } else {
+            steerTowardBricks(origin, direction, 1 / 120)
+          }
+          let travel = speed / 120
+          for (let collision = 0; travel > 0.00001 && collision < 8; collision++) {
+            const hit = trace(origin, direction)
+            const distance = Math.min(travel, Math.max(0, hit.distance))
+            for (; nextDot < distance && count < maxDots; nextDot += spacing) {
+              dotMatrix.makeTranslation(origin.x + direction.x * nextDot, origin.y + direction.y * nextDot, 0)
+              dots.setMatrixAt(count++, dotMatrix)
+            }
+            nextDot -= distance
+            origin.addScaledVector(direction, distance)
+            travel -= distance
+            if (hit.distance > distance) break
+            if (hit.bottom || (hit.topExit && topBounces >= 1) || reflections++ > 0) { finished = true; break }
+            if (hit.topExit) topBounces++
+            direction.reflect(hit.normal)
+            origin.addScaledVector(direction, 0.001)
+          }
         }
-        origin.addScaledVector(direction, distance)
-        direction.reflect(normal)
-        // Start just clear of the surface to avoid hitting the same face again.
-        origin.addScaledVector(direction, 0.001)
-        nextDot -= distance + 0.001
+        dots.count = count
+        dots.instanceMatrix.needsUpdate = true
+        return
+      }
+      const angles = powerup === 'multi' ? [0, -MULTIBALL_SPREAD, MULTIBALL_SPREAD] : [0]
+      for (const angle of angles) {
+        origin.copy(ball.position)
+        direction.copy(aimDirection).applyAxisAngle(new Vector3(0, 0, 1), angle)
+        nextDot = ballRadius + 0.15 + phase
+        const pathLimit = Math.min(count + 200, maxDots)
+        // Two segments: the initial path and the path after its first reflection.
+        for (let segment = 0; segment < 2; segment++) {
+          const { distance, normal } = trace(origin, direction, powerup === 'laser')
+          if (!Number.isFinite(distance) || distance < 0) break
+          for (; nextDot < distance && count < pathLimit; nextDot += spacing) {
+            dotMatrix.makeTranslation(
+              origin.x + direction.x * nextDot,
+              origin.y + direction.y * nextDot,
+              0,
+            )
+            dots.setMatrixAt(count++, dotMatrix)
+          }
+          origin.addScaledVector(direction, distance)
+          direction.reflect(normal)
+          // Start just clear of the surface to avoid hitting the same face again.
+          origin.addScaledVector(direction, 0.001)
+          nextDot -= distance + 0.001
+        }
       }
       dots.count = count
       dots.instanceMatrix.needsUpdate = true
@@ -729,9 +936,27 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       updateTrail()
       if (!drawing) {
         beam.visible = beamTip.visible = false
-        if (flying && !reducedMotion.matches) updateBeam(ball.position, 0.15, false)
+        const activeBall = flightBalls.find((actor) => actor.active)
+        if (flying && activeBall && !reducedMotion.matches) updateBeam(activeBall.mesh.position, 0.15, false)
       }
-      ball.visible = !cleared && returnAt === null && (flying || remainingLives > 0)
+      ball.visible = !cleared && returnAt === null && (flying ? flightBalls[0].active : remainingLives > 0)
+      flightBalls.slice(1).forEach((actor) => { actor.mesh.visible = !cleared && actor.active })
+      const now = performance.now()
+      flightBalls.forEach((actor) => {
+        if (!actor.effect) return
+        actor.effect.group.visible = actor.mesh.visible && !drawing
+        actor.effect.group.position.copy(actor.mesh.position)
+        actor.effect.update(now, flying ? actor.direction : aimDirection, actor.splitGeneration, reducedMotion.matches)
+      })
+      shields.forEach((shield, index) => {
+        const bounces = flying || returnAt !== null
+          ? powerup === 'gravity' ? flightBalls[0].topBounces : flightBalls[0].bottomBounces
+          : 0
+        shield.visible = !entering && !completed && index >= bounces
+        const flash = reducedMotion.matches ? 0 : Math.max(0, 1 - (now - lastShieldHit) / 350)
+        shield.material.color.set(flash > 0 ? '#d9ffe6' : ballColor)
+        shield.material.opacity = reducedMotion.matches ? 0.8 : 0.65 + Math.sin(now / 200 + index) * 0.12 + flash * 0.2
+      })
       ballMaterial.visible = !drawing
       ballTrace.visible = drawing
       dots.visible = !demoMode && !cleared && !entering && !flying && returnAt === null && remainingLives > 0
@@ -742,19 +967,25 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
     }
     let lastTime = 0
     const spinAxis = new Vector3()
-    const moveBall = (distance: number) => {
-      spinAxis.set(-flightDirection.y, flightDirection.x, 0)
-      ball.rotateOnWorldAxis(spinAxis, distance / BALL_RADIUS * 0.35)
-      ball.position.addScaledVector(flightDirection, distance)
-      recordTrail()
+    const moveBall = (actor: FlightBall, distance: number) => {
+      spinAxis.set(-actor.direction.y, actor.direction.x, 0)
+      actor.mesh.rotateOnWorldAxis(spinAxis, distance / ballRadius * 0.35)
+      actor.mesh.position.addScaledVector(actor.direction, distance)
+      if (actor.mesh === ball) recordTrail()
     }
     const animate = (time: number) => {
+      if (pausedRef.current) {
+        lastTime = time
+        animationFrame = requestAnimationFrame(animate)
+        return
+      }
       if (!flying) {
         const finishedExit = returnAt !== null && time >= returnAt
         if (finishedExit) {
           returnAt = null
           ball.position.y = ballStartY
           ball.quaternion.identity()
+          setShieldCharges(shieldCapacity)
           setIsFlying(false)
           if (remainingLives === 0) {
             completed = true
@@ -766,54 +997,126 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
         if (remainingLives > 0 || bursts.length > 0 || returnAt !== null || !reducedMotion.matches) animationFrame = requestAnimationFrame(animate)
         return
       }
-      let remaining = Math.min((time - lastTime) / 1000, 0.05) * (demoMode ? 7 : BALL_SPEED)
+      const delta = Math.max(0, Math.min((time - lastTime) / 1000, 0.05))
       lastTime = time
       let collided = false
-      // Sweep each movement to its nearest collision so fast shots cannot skip bricks.
-      for (let collisions = 0; remaining > 0.00001 && collisions < 8; collisions++) {
-        const hit = trace(ball.position, flightDirection)
-        const distance = Math.max(0, hit.distance)
-        if (distance > remaining) {
-          moveBall(remaining)
-          break
+      const destroyBrick = (index: number) => {
+        if (destroyed.has(index)) return
+        if (!demoMode) {
+          destroyed.add(index)
+          setBricksRemaining(occupied.length - destroyed.size)
+          showHitPopup(index)
         }
-        moveBall(distance)
-        remaining -= distance
-        collided = true
-        shakeScreen()
-        if (hit.bottom) {
-          flying = false
-          explode(ballBurstGeometry, ball.position, '#55ff91', '#bdffd3', MAX_LIVES - remainingLives)
-          returnAt = performance.now() + (reducedMotion.matches ? 0 : 700)
-          break
+        brickLines[index].visible = false
+        matrix.makeScale(0, 0, 0)
+        brickFaces.setMatrixAt(index, matrix)
+        brickFaces.instanceMatrix.needsUpdate = true
+        explode(brickEdges, brickLines[index].position, powerup === 'blast' ? '#ff943d' : brickColor, powerup === 'blast' ? '#fff3ce' : brickHighlight, occupied[index].id + 1)
+        if (demoMode) replaceDemoBrick(index)
+      }
+      // New split balls begin moving next frame; all balls share one shot and combo.
+      for (const actor of [...flightBalls]) {
+        if (!actor.active || cleared) continue
+        const position = actor.mesh.position
+        const direction = actor.direction
+        let speed = demoMode ? 7 : BALL_SPEED
+        if (powerup === 'blackhole') steerTowardBricks(position, direction, delta)
+        if (powerup === 'gravity') {
+          // Accelerate upward while retaining horizontal momentum.
+          direction.multiplyScalar(actor.mesh.userData.speed ?? BALL_SPEED)
+          direction.y += REVERSE_GRAVITY_ACCELERATION * delta
+          speed = Math.min(direction.length(), REVERSE_GRAVITY_MAX_SPEED)
+          direction.normalize()
+          actor.mesh.userData.speed = speed
         }
-        if (hit.brickIndex !== undefined) {
-          if (!demoMode) {
-            destroyed.add(hit.brickIndex)
-            setBricksRemaining(occupied.length - destroyed.size)
-            showHitPopup(hit.brickIndex)
+        let remaining = delta * speed
+        // Sweep each movement so fast shots cannot skip bricks.
+        for (let collisions = 0; remaining > 0.00001 && collisions < 16; collisions++) {
+          const hit = trace(position, direction)
+          const distance = Math.max(0, hit.distance)
+          if (distance > remaining) {
+            moveBall(actor, remaining)
+            break
           }
-          brickLines[hit.brickIndex].visible = false
-          matrix.makeScale(0, 0, 0)
-          brickFaces.setMatrixAt(hit.brickIndex, matrix)
-          brickFaces.instanceMatrix.needsUpdate = true
-          explode(brickEdges, brickLines[hit.brickIndex].position, brickColor, brickHighlight, occupied[hit.brickIndex].id + 1)
-          if (demoMode) replaceDemoBrick(hit.brickIndex)
+          moveBall(actor, distance)
+          remaining -= distance
+          collided = true
+          shakeScreen()
+          if ((hit.topExit && actor.topBounces >= 1) || (hit.bottom && !(powerup === 'shield' && actor.bottomBounces < SHIELD_BOUNCES))) {
+            actor.active = false
+            actor.mesh.visible = false
+            explode(ballBurstGeometry, position, '#55ff91', '#bdffd3', maxLives - remainingLives)
+            break
+          }
+          if (hit.topExit) {
+            actor.topBounces++
+            setShieldCharges(0)
+            lastShieldHit = performance.now()
+          }
+          if (hit.bottom) {
+            actor.bottomBounces++
+            if (powerup === 'shield') {
+              setShieldCharges(SHIELD_BOUNCES - actor.bottomBounces)
+              lastShieldHit = performance.now()
+            }
+          }
+          if (hit.brickIndex !== undefined) {
+            destroyBrick(hit.brickIndex)
+            if (powerup === 'blast') {
+              const center = brickLines[hit.brickIndex].position
+              blastImpact(center)
+              brickLines.forEach((brick, index) => {
+                if (!destroyed.has(index) && brick.position.distanceTo(center) <= 1.25) destroyBrick(index)
+              })
+            }
+            if (powerup === 'chain') {
+              const path = [brickLines[hit.brickIndex].position.clone()]
+              // Bonus hits do not trigger another chain.
+              for (let jump = 0; jump < 1; jump++) {
+                const origin = path[path.length - 1]
+                let target: number | undefined
+                let nearest = LIGHTNING_RANGE * LIGHTNING_RANGE
+                brickLines.forEach((brick, index) => {
+                  if (destroyed.has(index)) return
+                  const distance = brick.position.distanceToSquared(origin)
+                  if (distance < nearest) { nearest = distance; target = index }
+                })
+                if (target === undefined) break
+                path.push(brickLines[target].position.clone())
+                destroyBrick(target)
+              }
+              if (path.length > 1) lightningImpact(path)
+            }
+          }
+          if (!(powerup === 'blast' && hit.brickIndex !== undefined)) sparkImpact(hit.normal, position)
+          if (!demoMode && destroyed.size === occupied.length) {
+            cleared = true
+            completed = true
+            flying = false
+            setIsFlying(false)
+            setRoundComplete(true)
+            break
+          }
+          if (!(powerup === 'laser' && hit.brickIndex !== undefined)) direction.reflect(hit.normal)
+          if (powerup === 'split' && actor.splitGeneration < 2 && hit.brickIndex !== undefined) {
+            actor.splitGeneration++
+            const axis = new Vector3(0, 0, 1)
+            const otherDirection = direction.clone().applyAxisAngle(axis, -0.18)
+            direction.applyAxisAngle(axis, 0.18)
+            // Both children must head away from the collision surface.
+            if (direction.dot(hit.normal) <= 0) direction.reflect(hit.normal)
+            if (otherDirection.dot(hit.normal) <= 0) otherDirection.reflect(hit.normal)
+            addBall(position.clone().addScaledVector(otherDirection, 0.002), otherDirection, actor.splitGeneration)
+          }
+          position.addScaledVector(direction, 0.001)
+          const sideLimit = FIELD_WIDTH / 2 - ballRadius - 0.001
+          position.x = Math.max(-sideLimit, Math.min(sideLimit, position.x))
+          position.y = Math.max(-fieldHeight / 2 + ballRadius + 0.001, Math.min(fieldHeight / 2 - ballRadius - 0.001, position.y))
         }
-        sparkImpact(hit.normal)
-        if (!demoMode && destroyed.size === occupied.length) {
-          cleared = true
-          completed = true
-          flying = false
-          setIsFlying(false)
-          setRoundComplete(true)
-          break
-        }
-        flightDirection.reflect(hit.normal)
-        ball.position.addScaledVector(flightDirection, 0.001)
-        const sideLimit = FIELD_WIDTH / 2 - BALL_RADIUS - 0.001
-        ball.position.x = Math.max(-sideLimit, Math.min(sideLimit, ball.position.x))
-        ball.position.y = Math.min(fieldHeight / 2 - BALL_RADIUS - 0.001, ball.position.y)
+      }
+      if (flying && !flightBalls.some((actor) => actor.active)) {
+        flying = false
+        returnAt = performance.now() + (reducedMotion.matches ? 0 : 700)
       }
       persist(collided)
       render()
@@ -828,6 +1131,24 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       flying = true
       setIsFlying(true)
       flightDirection.copy(aimDirection)
+      flightBalls.slice(1).forEach((actor) => {
+        scene.remove(actor.mesh)
+        if (actor.effect) {
+          scene.remove(actor.effect.group)
+          actor.effect.dispose()
+        }
+      })
+      flightBalls.length = 1
+      Object.assign(flightBalls[0], { active: true, splitGeneration: 0, bottomBounces: 0, topBounces: 0 })
+      setShieldCharges(shieldCapacity)
+      ball.userData.speed = BALL_SPEED
+      if (powerup === 'multi') {
+        const axis = new Vector3(0, 0, 1)
+        for (const angle of [-MULTIBALL_SPREAD, MULTIBALL_SPREAD]) {
+          const direction = aimDirection.clone().applyAxisAngle(axis, angle)
+          addBall(ball.position, direction)
+        }
+      }
       trailSamples.length = 0
       lastAfterimage = -Infinity
       recordTrail()
@@ -892,7 +1213,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       if (event.pointerId !== dragPointer) return
       event.preventDefault()
       if (dragMode === 'move') {
-        const limit = FIELD_WIDTH / 2 - BALL_RADIUS
+        const limit = FIELD_WIDTH / 2 - ballRadius
         ball.position.x = Math.max(-limit, Math.min(limit, point.x + dragOffset))
       } else {
         aimAt(point.x, point.y)
@@ -948,7 +1269,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       let distance = 1
       for (const x of [-FIELD_WIDTH / 2, FIELD_WIDTH / 2]) {
         for (const y of [-fieldHeight / 2, fieldHeight / 2]) {
-          for (const z of [-0.35, WALL_HEIGHT - BALL_RADIUS + 0.1]) {
+          for (const z of [-0.35, WALL_HEIGHT - ballRadius + 0.1]) {
             const corner = new Vector3(x, y, z).applyQuaternion(inverseRotation)
             distance = Math.max(distance,
               corner.z + Math.abs(corner.x) / (tangent * camera.aspect),
@@ -980,6 +1301,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
     lastTime = performance.now()
     if (demoMode && !reducedMotion.matches) {
       flying = true
+      flightBalls[0].active = true
       flightDirection.set(0.6, 0.8, 0)
       setIsFlying(true)
       render()
@@ -996,6 +1318,8 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       cancelAnimationFrame(animationFrame)
       observer.disconnect()
       bursts.forEach(disposeBurst)
+      shockwaves.forEach(disposeShockwave)
+      shockwaveGeometry.dispose()
       window.removeEventListener('resize', resize)
       canvas.removeEventListener('webglcontextrestored', render)
       canvas.removeEventListener('pointerdown', pointerDown)
@@ -1031,6 +1355,9 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       afterimages.forEach((ghost) => ghost.material.dispose())
       ballBurstGeometry.dispose()
       ballMaterial.dispose()
+      flightBalls.forEach((actor) => actor.effect?.dispose())
+      shieldGeometry.dispose()
+      shields.forEach((shield) => shield.material.dispose())
       arrowGeometry.dispose()
       arrowMaterial.dispose()
       dots.dispose()
@@ -1044,7 +1371,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       renderer.forceContextLoss()
       canvas.remove()
     }
-  }, [bricks, brickColor, initialProgress, onProgress, demoMode])
+  }, [bricks, brickColor, initialProgress, onProgress, demoMode, powerup, ballRadius, maxLives, shieldCapacity])
 
   const score = calculateRoundScore({
     totalBricks: bricks.filter((brick) => brick.occupied).length,
@@ -1057,7 +1384,15 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
   return (
     <>
       <div className="board" style={{ aspectRatio: demoMode ? '1.15' : `${FIELD_WIDTH} / ${fieldHeight}` }}>
-        {roundLabel && <p className="round-number" role="status">{roundLabel}</p>}
+        {(roundLabel || !demoMode) && <div className="board-hud">
+          {roundLabel && <p className="round-number" role="status">{roundLabel}</p>}
+          {!demoMode && <p className="round-best-combo" aria-label={`Best combo this round: ${bestCombo}`}>
+            Best {bestCombo}x
+          </p>}
+        </div>}
+        {(powerup === 'shield' || powerup === 'gravity') && !demoMode && !roundComplete && <p className="board-shield" aria-label={`${shieldCharges} ${powerup === 'gravity' ? 'top' : 'bottom'} bounces remaining`}>
+          {powerup === 'gravity' ? 'Top shield' : 'Shield'} {shieldCharges} / {shieldCapacity}
+        </p>}
         <div className="board-surface" ref={containerRef} />
         {hitPopups.map((popup) => (
           <span className="hit-popup" key={popup.id} style={{
@@ -1073,6 +1408,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
         <RoundSummary
           open={summaryOpen}
           ballsRemaining={lives}
+          totalBalls={maxLives}
           bricksRemaining={bricksRemaining}
           brickColor={brickColor}
           bestCombo={bestCombo}
@@ -1084,9 +1420,9 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       </div>
       {!demoMode && <>
       <div className="lives" role="status" aria-live="polite" aria-atomic="true">
-        <span>Balls remaining <span className="sr-only">{lives} of {MAX_LIVES}</span></span>
+        <span>Balls remaining <span className="sr-only">{lives} of {maxLives}</span></span>
         <span className="life-balls" aria-hidden="true">
-          {Array.from({ length: MAX_LIVES }, (_, index) => (
+          {Array.from({ length: maxLives }, (_, index) => (
             <BallIndicator key={index} available={index < lives} />
           ))}
         </span>
