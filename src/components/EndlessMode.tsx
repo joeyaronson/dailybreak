@@ -26,6 +26,7 @@ function EndlessRun({ seed, dateKey, mode, onRestart }: { seed: number; dateKey:
     const baseCount = Math.min((mode === 'arcade' ? 20 : 2) + roundIndex * 2, GRID_SIZE * GRID_SIZE)
     const count = powerup === 'thin' ? baseCount - Math.round(baseCount * 0.5) : baseCount
     return {
+      seed: roundSeed,
       bricks: generateBrickLayout(roundSeed, count),
       color: COLORS[Math.floor(createSeededRandom(roundSeed)() * COLORS.length)],
       targets: { combo: Math.min(count, 6), spareBalls: 2 },
@@ -47,6 +48,7 @@ function EndlessRun({ seed, dateKey, mode, onRestart }: { seed: number; dateKey:
         key={roundIndex}
         roundLabel={mode === 'arcade' ? `Level ${roundIndex + 1} · ${POWERUPS.find((item) => item.id === powerup)?.name}` : `Round ${roundIndex + 1}`}
         powerup={powerup ?? undefined}
+        shuffleSeed={round.seed}
         bricks={round.bricks}
         brickColor={round.color}
         scoreTargets={round.targets}

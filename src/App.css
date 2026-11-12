@@ -597,4 +597,13 @@ header time {
 .leaderboard-table th:last-child, .leaderboard-table td:last-child { text-align: right; padding-right: 0; padding-left: 16px; width: 1%; white-space: nowrap; }
 .leaderboard-you { background: #10301e; }
 .leaderboard-error { margin-bottom: 16px; }
+.leaderboard-page { flex: 1; width: 100%; max-width: 480px; margin: 0 auto; padding: 20px 0; }
+.leaderboard-page h1 { margin: 0 0 20px; font-size: 1.25rem; font-weight: 400; }
+.leaderboard-page h1:focus { outline: none; }
+.leaderboard-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.leaderboard-tab { padding: 10px 4px; font-size: clamp(0.625rem, 2.7vw, 0.8125rem); letter-spacing: 0.5px; }
+.leaderboard-tab[aria-selected="true"] { background: #153522; border-color: #e0ffeb; }
+.leaderboard-page .daily-leaderboard { margin-top: 20px; padding-top: 0; border-top: 0; }
 .build-version { font-size: 0.625rem; opacity: 0.55; white-space: nowrap; }
+.shot-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; width: 100%; max-width: 480px; margin: 0 auto; }
+.shot-controls .launch-button { padding: 12px 8px; font-size: 0.875rem; }

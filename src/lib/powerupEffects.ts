@@ -5,6 +5,8 @@ export const POWERUP_COLORS: Record<Powerup, string> = {
   big: '#ffe65c', multi: '#65ffc5', split: '#b77dff', laser: '#ff5252',
   shield: '#3388ff', gravity: '#65dfff', blast: '#ff943d', extra: '#ff5cde',
   thin: '#b5ff65', chain: '#a0eaff', blackhole: '#c48aff',
+  ghost: '#d8ecff',
+  shuffle: '#9da8ff',
 }
 
 /** Wireframe ornaments stay in the play plane, independent of the ball's spin. */
@@ -88,6 +90,19 @@ export function createPowerupEffect(powerup: Powerup, radius: number) {
       })
       orbit.add(segments(points.slice(1).flatMap((point, index) => [points[index], point])))
     }
+  } else if (powerup === 'ghost') {
+    const outline = Array.from({ length: 21 }, (_, index) => {
+      const angle = Math.PI - index / 20 * Math.PI
+      return [Math.cos(angle) * radius * 1.6, Math.sin(angle) * radius * 1.6]
+    })
+    outline.push([radius * 1.6, -radius * 1.5], [radius * 0.8, -radius],
+      [0, -radius * 1.5], [-radius * 0.8, -radius], [-radius * 1.6, -radius * 1.5])
+    segments(outline.flatMap((point, index) => [point, outline[(index + 1) % outline.length]]))
+  } else if (powerup === 'shuffle') {
+    for (let index = 0; index < 4; index++) {
+      const angle = index * Math.PI / 2
+      orbit.add(ring(radius * 0.5, Math.cos(angle) * radius * 1.8, Math.sin(angle) * radius * 1.8, 4))
+    }
   } else {
     ring(radius * 1.6)
     for (const x of [-radius * 2, radius * 2]) {
@@ -100,11 +115,12 @@ export function createPowerupEffect(powerup: Powerup, radius: number) {
     update(time: number, direction: Vector3, splitGeneration: number, reducedMotion: boolean) {
       const phase = reducedMotion ? 0 : time / 1000
       // Gravity arrows point toward the top even while the ball is falling.
-      group.rotation.z = powerup === 'gravity' ? 0 : Math.atan2(-direction.x, direction.y)
+      group.rotation.z = powerup === 'gravity' || powerup === 'ghost' ? 0 : Math.atan2(-direction.x, direction.y)
       orbit.rotation.z = phase * (powerup === 'blast' ? 2.4 : 1.2)
       const pulse = reducedMotion ? 1 : 1 + Math.sin(phase * 6) * 0.08
       group.scale.setScalar(pulse * (powerup === 'split' ? 0.75 ** splitGeneration : 1))
       material.opacity = reducedMotion ? 0.8 : 0.65 + Math.sin(phase * 8) * 0.15
+      if (powerup === 'ghost') material.opacity *= direction.y >= 0 ? 0.45 : 1.2
     },
     dispose() {
       geometries.forEach((geometry) => geometry.dispose())

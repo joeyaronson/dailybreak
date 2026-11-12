@@ -3,12 +3,11 @@ import type { FormEvent } from 'react'
 import { getLeaderboardBrowserId, getLeaderboardNickname, leaderboardEnabled, loadLeaderboard, submitScore } from '../lib/leaderboard'
 import type { Leaderboard } from '../lib/leaderboard'
 import type { RoundResult } from '../lib/scoring'
-import type { Powerup } from '../lib/powerups'
 import { LEADERBOARD_MODE_NAMES } from '../lib/leaderboardProtocol'
 import type { LeaderboardMode } from '../lib/leaderboardProtocol'
 import { NICKNAME_MAX_LENGTH } from '../lib/nickname'
 
-export function GameLeaderboard({ mode, dateKey, results, powerups }: { mode: LeaderboardMode; dateKey: string; results: readonly RoundResult[]; powerups: readonly Powerup[] }) {
+export function GameLeaderboard({ mode, dateKey, results }: { mode: LeaderboardMode; dateKey: string; results?: readonly RoundResult[] }) {
   const [identity] = useState(() => {
     try { return { id: getLeaderboardBrowserId(), error: '' } }
     catch (error) { return { id: null, error: error instanceof Error ? error.message : 'Site storage is unavailable.' } }
@@ -36,16 +35,16 @@ export function GameLeaderboard({ mode, dateKey, results, powerups }: { mode: Le
 
   if (!leaderboardEnabled) return null
 
-  const total = results.reduce((sum, round) => sum + round.total, 0)
-  const canSubmit = !board?.you || (mode !== 'daily' && total > board.you.score)
+  const total = results?.reduce((sum, round) => sum + round.total, 0) ?? 0
+  const canSubmit = results !== undefined && (!board?.you || (mode !== 'daily' && total > board.you.score))
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!identity.id || sendingRef.current || !canSubmit) return
+    if (!identity.id || !results || sendingRef.current || !canSubmit) return
     sendingRef.current = true
     setSubmitting(true)
     setError('')
-    try { setBoard(await submitScore(mode, dateKey, identity.id, nickname.trim(), results, powerups)) }
+    try { setBoard(await submitScore(mode, dateKey, identity.id, nickname.trim(), total, results.length)) }
     catch (error) { setError(error instanceof Error ? error.message : 'Could not submit. Try again.') }
     finally { sendingRef.current = false; setSubmitting(false) }
   }
@@ -62,7 +61,7 @@ export function GameLeaderboard({ mode, dateKey, results, powerups }: { mode: Le
           {submitting ? 'Submitting…' : board?.you ? 'Submit new best' : 'Submit score'}
         </button>
       </form>}
-      {identity.error && <p role="alert">{identity.error}</p>}
+      {results && identity.error && <p role="alert">{identity.error}</p>}
       {error && <div className="leaderboard-error"><p role="alert">{error}</p>
         <button className="launch-button" type="button" onClick={() => setRefresh((value) => value + 1)} disabled={loading || submitting}>Retry</button>
       </div>}

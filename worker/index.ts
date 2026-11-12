@@ -1,6 +1,4 @@
-import { BALLS_PER_ROUND, GAME_VERSION, GRID_SIZE, ROUND_BRICK_COUNTS } from '../src/lib/daily'
-import { calculateRoundScore, ROUND_SCORE_TARGETS } from '../src/lib/scoring'
-import { POWERUPS } from '../src/lib/powerups'
+import { GAME_VERSION, ROUND_BRICK_COUNTS } from '../src/lib/daily'
 import type { LeaderboardMode } from '../src/lib/leaderboardProtocol'
 import { validateNickname } from '../src/lib/nickname'
 
@@ -37,34 +35,18 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-function integer(value: unknown, min: number, max: number): number {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) throw new RequestError('Invalid round statistics.')
-  return value
-}
-
-function calculateScore(value: unknown, mode: LeaderboardMode, powerups: unknown): number {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 1000) throw new RequestError('Invalid run length.')
-  if (mode === 'daily' && value.length !== ROUND_BRICK_COUNTS.length) throw new RequestError('Finish all three rounds before submitting.')
-  if (mode === 'arcade' && (!Array.isArray(powerups) || powerups.length !== value.length)) throw new RequestError('Missing level powerups.')
-  return value.reduce((total, item, index) => {
-    const round = record(item)
-    const powerup = mode === 'arcade' && Array.isArray(powerups) ? powerups[index] : null
-    if (mode === 'arcade' && !POWERUPS.some((item) => item.id === powerup)) throw new RequestError('Invalid powerup.')
-    const baseCount = Math.min((mode === 'arcade' ? 20 : 2) + index * 2, GRID_SIZE * GRID_SIZE)
-    const totalBricks = mode === 'daily' ? ROUND_BRICK_COUNTS[index] : powerup === 'thin' ? baseCount - Math.round(baseCount * 0.5) : baseCount
-    const maxBalls = BALLS_PER_ROUND + (powerup === 'extra' ? 3 : 0)
-    const bricksRemaining = integer(round.bricksRemaining, 0, totalBricks)
-    const destroyed = totalBricks - bricksRemaining
-    const ballsRemaining = integer(round.ballsRemaining, 0, maxBalls - 1)
-    const bestCombo = integer(round.bestCombo, destroyed > 0 ? 1 : 0, destroyed)
-    if ((bricksRemaining > 0 && ballsRemaining !== 0)
-      || (destroyed === 0 && bestCombo !== 0)
-      || destroyed > bestCombo * (maxBalls - ballsRemaining)) throw new RequestError('Invalid completed round.')
-    if (mode !== 'daily' && (index === value.length - 1 ? bricksRemaining === 0 : bricksRemaining > 0)) throw new RequestError('Submit a finished run.')
-    // Ignore client totals and recompute from bounded round statistics.
-    const targets = mode === 'daily' ? ROUND_SCORE_TARGETS[index] : { combo: Math.min(totalBricks, 6), spareBalls: 2 }
-    return total + calculateRoundScore({ totalBricks, bricksRemaining, ballsRemaining, bestCombo, targets }).total
-  }, 0)
+function validateScore(body: Record<string, unknown>, mode: LeaderboardMode): number {
+  if (body.score === undefined && Array.isArray(body.results)) throw new RequestError('Reload the game before submitting.', 426)
+  const roundCount = body.roundCount
+  if (typeof roundCount !== 'number' || !Number.isInteger(roundCount) || roundCount < 1 || roundCount > 1000) {
+    throw new RequestError('Round count must be between 1 and 1,000.')
+  }
+  if (mode === 'daily' && roundCount !== ROUND_BRICK_COUNTS.length) throw new RequestError('Daily scores require all three rounds.')
+  const score = body.score
+  if (typeof score !== 'number' || !Number.isInteger(score) || score < 0 || score > roundCount * 1000) {
+    throw new RequestError('Score must be between 0 and 1,000 points per round.')
+  }
+  return score
 }
 
 async function readBody(request: Request): Promise<Record<string, unknown>> {
@@ -77,7 +59,7 @@ async function readBody(request: Request): Promise<Record<string, unknown>> {
     const chunk = await reader.read()
     if (chunk.done) break
     size += chunk.value.byteLength
-    if (size > 131072) { await reader.cancel(); throw new RequestError('Result is too large.', 413) }
+    if (size > 4096) { await reader.cancel(); throw new RequestError('Result is too large.', 413) }
     chunks.push(chunk.value)
   }
   const bytes = new Uint8Array(size)
@@ -145,7 +127,7 @@ export default {
       const browserId = validateBrowserId(body.browserId)
       const { nickname, error: nicknameError } = validateNickname(body.nickname)
       if (nicknameError) throw new RequestError(nicknameError)
-      const score = calculateScore(body.results, mode, body.powerups)
+      const score = validateScore(body, mode)
       const conflict = mode === 'daily' ? 'DO NOTHING' : `DO UPDATE SET nickname = excluded.nickname, score = excluded.score,
         submitted_at = excluded.submitted_at WHERE excluded.score > scores.score`
       const inserted = await env.DB.prepare(`

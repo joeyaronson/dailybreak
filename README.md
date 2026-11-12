@@ -52,7 +52,7 @@ Each mode has its own leaderboard for the game's local calendar date. Players su
 
 Nicknames are limited to 10 characters. The form and API share an English profanity/slur filter that checks common disguised spellings; names must contain a letter or number and use only letters, numbers, spaces, or basic punctuation. The database enforces the length limit too. The nickname migration shortens legacy names without changing their scores, and inappropriate legacy names display as "Player".
 
-GitHub Pages still hosts the game. A separate Cloudflare Worker and D1 database handle scores. The Worker recalculates totals from validated round statistics, accounts for Arcade powerups, limits requests, and keeps only compact score records for 30 days. Browser IDs are not authentication, and submitted stats are not a verified gameplay replay; this is a casual leaderboard.
+GitHub Pages still hosts the game. A separate Cloudflare Worker and D1 database handle scores. The Worker accepts a final score and round count, caps scores at 1,000 points per round (3,000 for Daily), limits requests, and keeps only compact score records for 30 days. Browser IDs are not authentication and runs are not verified; this is a casual leaderboard. New powerups do not require backend changes.
 
 Local development:
 
@@ -79,7 +79,7 @@ npm run leaderboard:deploy
 
 Set `VITE_LEADERBOARD_URL` in `.env.production` to the returned `https://dailybreak-leaderboard.<subdomain>.workers.dev` address and rebuild the frontend. This is a public endpoint, not a secret. No Cloudflare tokens belong in frontend environment variables. The configured allowed origins include the production site and localhost development URLs; add another development origin explicitly if needed.
 
-Backend routes are `GET /daily?date=YYYY-MM-DD&browserId=...` and `POST /daily`, with equivalent `/endless` and `/arcade` routes. POST includes `dateKey`, `gameVersion`, `browserId`, `nickname`, and each round's `ballsRemaining`, `bricksRemaining`, and `bestCombo`; Arcade also includes the selected `powerups` array. A duplicate Daily submission returns the original entry, so retrying after a network failure is safe. Endless/Arcade update only when the submitted run is better. Runs are limited to 1,000 rounds per submission. Writes accept current local dates worldwide (UTC date ±1 day).
+Backend routes are `GET /daily?date=YYYY-MM-DD&browserId=...` and `POST /daily`, with equivalent `/endless` and `/arcade` routes. POST includes `dateKey`, `gameVersion`, `browserId`, `nickname`, `score`, and `roundCount`. Scores and round counts must be integers; Daily requires exactly three rounds. Powerups and detailed round statistics are not submitted. A duplicate Daily submission returns the original entry, so retrying after a network failure is safe. Endless/Arcade update only when the submitted run is better. Runs are limited to 1,000 rounds per submission. Writes accept current local dates worldwide (UTC date ±1 day).
 
 Cloudflare setup references: [D1](https://developers.cloudflare.com/d1/get-started/), [rate limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/).
 

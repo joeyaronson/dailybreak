@@ -1,6 +1,4 @@
 import { GAME_VERSION } from './daily'
-import type { RoundResult } from './scoring'
-import type { Powerup } from './powerups'
 import type { LeaderboardMode } from './leaderboardProtocol'
 import { validateNickname } from './nickname'
 
@@ -51,13 +49,12 @@ export function loadLeaderboard(mode: LeaderboardMode, dateKey: string, browserI
   return requestBoard(`${API_URL}/${mode}?${params}`, { signal })
 }
 
-export async function submitScore(mode: LeaderboardMode, dateKey: string, browserId: string, nickname: string, results: readonly RoundResult[], powerups: readonly Powerup[]) {
+export async function submitScore(mode: LeaderboardMode, dateKey: string, browserId: string, nickname: string, score: number, roundCount: number) {
   const checked = validateNickname(nickname)
   if (checked.error) throw new Error(checked.error)
   const board = await requestBoard(`${API_URL}/${mode}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dateKey, gameVersion: GAME_VERSION, browserId, nickname: checked.nickname, powerups: mode === 'arcade' ? powerups : undefined,
-      results: results.map(({ ballsRemaining, bricksRemaining, bestCombo }) => ({ ballsRemaining, bricksRemaining, bestCombo })) }),
+    body: JSON.stringify({ dateKey, gameVersion: GAME_VERSION, browserId, nickname: checked.nickname, score, roundCount }),
   })
   try { localStorage.setItem(NAME_KEY, board.you?.nickname ?? nickname) } catch { /* Submission is already stored on the server. */ }
   return board

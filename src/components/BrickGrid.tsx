@@ -30,7 +30,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import { curvedScreenShader, sceneToScreen, screenToScene } from '../lib/crt'
-import { BALLS_PER_ROUND, createSeededRandom, GRID_SIZE } from '../lib/daily'
+import { BALLS_PER_ROUND, createSeededRandom, GRID_SIZE, hashSeed, shuffle } from '../lib/daily'
 import type { generateDailyGame } from '../lib/daily'
 import { RoundSummary } from './RoundSummary'
 import { BallIndicator } from './BallIndicator'
@@ -45,6 +45,7 @@ import { GamePauseContext } from '../lib/gamePause'
 type BrickGridProps = {
   roundLabel?: string
   powerup?: Powerup
+  shuffleSeed?: number
   demoMode?: boolean
   children?: ReactNode
   initialProgress: RoundProgress | null
@@ -88,7 +89,7 @@ function reflectBall(direction: Vector3, normal: Vector3) {
   keepBounceMoving(direction, normal)
 }
 
-export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, onProgress, hasNextRound, onNextRound, demoMode = false, children, roundLabel, powerup }: BrickGridProps) {
+export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, onProgress, hasNextRound, onNextRound, demoMode = false, children, roundLabel, powerup, shuffleSeed = 0 }: BrickGridProps) {
   const paused = useContext(GamePauseContext)
   const pausedRef = useRef(paused)
   useEffect(() => { pausedRef.current = paused }, [paused])
@@ -100,6 +101,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
   const containerRef = useRef<HTMLDivElement>(null)
   const launchRef = useRef<(() => void) | null>(null)
   const fastForwardRef = useRef<(() => void) | null>(null)
+  const shuffleRef = useRef<(() => void) | null>(null)
   const [unavailable, setUnavailable] = useState(false)
   const [isFlying, setIsFlying] = useState(false)
   const [canFastForward, setCanFastForward] = useState(false)
@@ -145,6 +147,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
     setBricksRemaining(bricks.filter((brick) => brick.occupied).length - (initialProgress?.destroyedBricks.length ?? 0))
     setHitPopups([])
     setShieldCharges(shieldCapacity)
+    let shuffleCount = 0
     let bestComboValue = initialProgress?.bestCombo ?? 0
     setBestCombo(bestComboValue)
     let shotHits = initialProgress?.shotHits ?? 0
@@ -327,7 +330,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
     }
     const ballBurstGeometry = new BufferGeometry().setFromPoints(ballFragments)
     const ballColor = powerup ? POWERUP_COLORS[powerup] : '#bdffd3'
-    const ballMaterial = new MeshBasicMaterial({ color: ballColor, wireframe: true })
+    const ballMaterial = new MeshBasicMaterial({ color: ballColor, wireframe: true, transparent: powerup === 'ghost', depthWrite: powerup !== 'ghost' })
     const ball = new Mesh(ballGeometry, ballMaterial)
     ball.position.set(
       initialProgress?.ball.x ?? 0,
@@ -384,17 +387,28 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       scene.add(effect.group)
       return effect
     }
-    type FlightBall = { mesh: typeof ball; direction: Vector3; active: boolean; splitGeneration: number; bottomBounces: number; topBounces: number; effect?: ReturnType<typeof createPowerupEffect> }
-    const flightBalls: FlightBall[] = [{ mesh: ball, direction: flightDirection, active: flying, splitGeneration: 0, bottomBounces: 0, topBounces: 0, effect: makeEffect() }]
+    type FlightBall = { mesh: typeof ball; direction: Vector3; active: boolean; pierceReady: boolean; splitGeneration: number; bottomBounces: number; topBounces: number; effect?: ReturnType<typeof createPowerupEffect> }
+    const flightBalls: FlightBall[] = [{ mesh: ball, direction: flightDirection, active: flying, pierceReady: true, splitGeneration: 0, bottomBounces: 0, topBounces: 0, effect: makeEffect() }]
     const addBall = (position: Vector3, direction: Vector3, splitGeneration = 0) => {
       const mesh = new Mesh(ballGeometry, ballMaterial)
       mesh.position.copy(position)
       scene.add(mesh)
-      const actor: FlightBall = { mesh, direction: direction.clone(), active: true, splitGeneration, bottomBounces: 0, topBounces: 0, effect: makeEffect() }
+      const actor: FlightBall = { mesh, direction: direction.clone(), active: true, pierceReady: true, splitGeneration, bottomBounces: 0, topBounces: 0, effect: makeEffect() }
       flightBalls.push(actor)
       return actor
     }
-    const trace = (origin: Vector3, direction: Vector3, ignoreBricks = false) => {
+    const trace = (origin: Vector3, direction: Vector3, ignoreBricks = false, previewDestroyed?: ReadonlySet<number>) => {
+      const phasing = powerup === 'ghost' && direction.y >= 0
+      if (powerup === 'ghost' && !phasing && !ignoreBricks) {
+        // A ghost can turn solid while already overlapping a top-row brick.
+        const overlap = occupied.findIndex((_, index) => !destroyed.has(index) && !demoDrops.has(index) && !previewDestroyed?.has(index)
+          && Math.abs(origin.x - brickLines[index].position.x) < 0.46 + ballRadius - 0.00001
+          && Math.abs(origin.y - brickLines[index].position.y) < (CELL_HEIGHT - 0.08) / 2 + ballRadius - 0.00001)
+        if (overlap !== -1) return {
+          distance: 0, brickIndex: overlap, bottom: false, topExit: false,
+          normal: Math.abs(direction.y) >= Math.abs(direction.x) ? new Vector3(0, 1, 0) : new Vector3(-Math.sign(direction.x), 0, 0),
+        }
+      }
       const normal = new Vector3(0, -Math.sign(direction.y), 0)
       let bottom = direction.y < 0 && !demoMode
       let brickIndex: number | undefined
@@ -409,8 +423,8 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
         }
       }
       raycaster.set(origin, direction)
-      const hit = (ignoreBricks ? [] : raycaster.intersectObject(collider, false))
-        .find((hit) => hit.instanceId !== undefined && !destroyed.has(hit.instanceId) && !demoDrops.has(hit.instanceId))
+      const hit = (ignoreBricks || phasing ? [] : raycaster.intersectObject(collider, false))
+        .find((hit) => hit.instanceId !== undefined && !destroyed.has(hit.instanceId) && !demoDrops.has(hit.instanceId) && !previewDestroyed?.has(hit.instanceId))
       if (hit?.face && hit.distance < distance) {
         distance = hit.distance
         normal.copy(hit.face.normal)
@@ -899,9 +913,12 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
         direction.copy(aimDirection).applyAxisAngle(new Vector3(0, 0, 1), angle)
         nextDot = ballRadius + 0.15 + phase
         const pathLimit = Math.min(count + 200, maxDots)
-        // Two segments: the initial path and the path after its first reflection.
-        for (let segment = 0; segment < 2; segment++) {
-          const { distance, normal } = trace(origin, direction, powerup === 'laser')
+        const previewDestroyed = new Set<number>()
+        let pierceReady = true
+        let reflections = 0
+        // Show one bounce, allowing Big ball's piercing hit on either side of it.
+        for (let contact = 0; contact < 4 && reflections < 2; contact++) {
+          const { distance, normal, brickIndex } = trace(origin, direction, powerup === 'laser', previewDestroyed)
           if (!Number.isFinite(distance) || distance < 0) break
           for (; nextDot < distance && count < pathLimit; nextDot += spacing) {
             dotMatrix.makeTranslation(
@@ -912,7 +929,14 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
             dots.setMatrixAt(count++, dotMatrix)
           }
           origin.addScaledVector(direction, distance)
-          reflectBall(direction, normal)
+          const pierces = powerup === 'big' && brickIndex !== undefined && pierceReady
+          if (powerup === 'big' && brickIndex !== undefined) previewDestroyed.add(brickIndex)
+          if (pierces) pierceReady = false
+          else {
+            reflectBall(direction, normal)
+            reflections++
+            pierceReady = true
+          }
           // Start just clear of the surface to avoid hitting the same face again.
           origin.addScaledVector(direction, 0.001)
           nextDot -= distance + 0.001
@@ -979,6 +1003,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
         shield.material.opacity = reducedMotion.matches ? 0.8 : 0.65 + Math.sin(now / 200 + index) * 0.12 + flash * 0.2
       })
       ballMaterial.visible = !drawing
+      if (powerup === 'ghost') ballMaterial.opacity = flying ? (flightDirection.y >= 0 ? 0.25 : 1) : 0.55
       ballTrace.visible = drawing
       dots.visible = !demoMode && !cleared && !entering && !flying && returnAt === null && remainingLives > 0
       if (dots.visible) updatePreview()
@@ -1110,7 +1135,12 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
             setRoundComplete(true)
             break
           }
-          if (!(powerup === 'laser' && hit.brickIndex !== undefined)) reflectBall(direction, hit.normal)
+          const pierces = hit.brickIndex !== undefined && (powerup === 'laser' || (powerup === 'big' && actor.pierceReady))
+          if (pierces) actor.pierceReady = false
+          else {
+            reflectBall(direction, hit.normal)
+            actor.pierceReady = true
+          }
           if (powerup === 'split' && actor.splitGeneration < 2 && hit.brickIndex !== undefined) {
             actor.splitGeneration++
             const axis = new Vector3(0, 0, 1)
@@ -1196,7 +1226,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
         }
       })
       flightBalls.length = 1
-      Object.assign(flightBalls[0], { active: true, splitGeneration: 0, bottomBounces: 0, topBounces: 0 })
+      Object.assign(flightBalls[0], { active: true, pierceReady: true, splitGeneration: 0, bottomBounces: 0, topBounces: 0 })
       setShieldCharges(shieldCapacity)
       ball.userData.speed = BALL_SPEED
       if (powerup === 'multi') {
@@ -1215,6 +1245,35 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       render()
       cancelAnimationFrame(animationFrame)
       animationFrame = requestAnimationFrame(animate)
+    }
+    shuffleRef.current = () => {
+      if (powerup !== 'shuffle' || pausedRef.current || completed || cleared || entering || flying || returnAt !== null || remainingLives === 0) return
+      const random = createSeededRandom(hashSeed(`${shuffleSeed}:shuffle:${shuffleCount}`))
+      const cells = shuffle(bricks, random)
+      const alive = occupied.map((_, index) => index).filter((index) => !destroyed.has(index))
+      const positionFor = (cell: typeof cells[number]) => new Vector3(
+        cell.column - (GRID_SIZE - 1) / 2,
+        fieldHeight / 2 - PADDING - (cell.row + 0.5) * CELL_HEIGHT, 0,
+      )
+      // Even a single remaining brick must move; destinations are unique grid cells.
+      if (alive.every((index, order) => brickLines[index].position.distanceToSquared(positionFor(cells[order])) < 0.00001)) {
+        const first = cells.shift()
+        if (first) cells.push(first)
+      }
+      alive.forEach((index, order) => {
+        const position = positionFor(cells[order])
+        brickLines[index].position.copy(position)
+        matrix.makeTranslation(position.x, position.y, 0)
+        brickFaces.setMatrixAt(index, matrix)
+        collider.setMatrixAt(index, matrix)
+      })
+      brickFaces.instanceMatrix.needsUpdate = true
+      collider.instanceMatrix.needsUpdate = true
+      brickFaces.computeBoundingSphere()
+      collider.computeBoundingSphere()
+      shuffleCount++
+      persist(true)
+      render()
     }
     let dragPointer: number | null = null
     let dragMode: 'move' | 'aim' = 'move'
@@ -1371,6 +1430,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       document.removeEventListener('visibilitychange', saveOnHide)
       launchRef.current = null
       fastForwardRef.current = null
+      shuffleRef.current = null
       popupTimers.forEach(clearTimeout)
       shake?.cancel()
       cancelAnimationFrame(animationFrame)
@@ -1429,7 +1489,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       renderer.forceContextLoss()
       canvas.remove()
     }
-  }, [bricks, brickColor, initialProgress, onProgress, demoMode, powerup, ballRadius, maxLives, shieldCapacity])
+  }, [bricks, brickColor, initialProgress, onProgress, demoMode, powerup, ballRadius, maxLives, shieldCapacity, shuffleSeed])
 
   const score = calculateRoundScore({
     totalBricks: bricks.filter((brick) => brick.occupied).length,
@@ -1490,6 +1550,12 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
           ))}
         </span>
       </div>
+      <div className={powerup === 'shuffle' && !roundComplete ? 'shot-controls' : undefined}>
+      {powerup === 'shuffle' && !roundComplete && <button className="launch-button" type="button"
+        disabled={summaryOpen || isEntering || isFlying || unavailable || paused || lives === 0}
+        onClick={() => shuffleRef.current?.()}>
+        Shuffle
+      </button>}
       <button
         className="launch-button"
         type="button"
@@ -1498,6 +1564,7 @@ export function BrickGrid({ bricks, brickColor, scoreTargets, initialProgress, o
       >
         {roundComplete ? 'Round results' : 'Launch'}
       </button>
+      </div>
       </>}
     </>
   )

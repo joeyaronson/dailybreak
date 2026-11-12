@@ -60,7 +60,7 @@ export function GameResults({ dateKey, results, colors, powerups = [], mode = 'd
       {onPlayAgain && <button className="launch-button play-again" type="button" onClick={onPlayAgain}>Play again</button>}
       <span className="sr-only" role="status">{copied ? 'Results copied to clipboard.' : ''}</span>
       {copyFailed && <p role="alert">Copy failed. Try again.</p>}
-      <GameLeaderboard key={`${mode}:${dateKey}`} mode={mode} dateKey={dateKey} results={results} powerups={powerups} />
+      <GameLeaderboard key={`${mode}:${dateKey}`} mode={mode} dateKey={dateKey} results={results} />
     </section>
   )
 }
