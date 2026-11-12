@@ -5,6 +5,7 @@ import { copyToClipboard } from '../lib/clipboard'
 import { POWERUPS } from '../lib/powerups'
 import type { Powerup } from '../lib/powerups'
 import { GameLeaderboard } from './GameLeaderboard'
+import { leaderboardEnabled } from '../lib/leaderboard'
 
 type GameResultsProps = {
   mode?: 'daily' | 'endless' | 'arcade'
@@ -60,7 +61,7 @@ export function GameResults({ dateKey, results, colors, powerups = [], mode = 'd
       {onPlayAgain && <button className="launch-button play-again" type="button" onClick={onPlayAgain}>Play again</button>}
       <span className="sr-only" role="status">{copied ? 'Results copied to clipboard.' : ''}</span>
       {copyFailed && <p role="alert">Copy failed. Try again.</p>}
-      <GameLeaderboard key={`${mode}:${dateKey}`} mode={mode} dateKey={dateKey} results={results} />
+      {leaderboardEnabled && <GameLeaderboard key={`${mode}:${dateKey}`} mode={mode} dateKey={dateKey} results={results} />}
     </section>
   )
 }

@@ -5,7 +5,9 @@ import { validateNickname } from './nickname'
 export type LeaderboardEntry = { nickname: string; score: number; rank: number; isYou: boolean }
 export type Leaderboard = { mode: LeaderboardMode; dateKey: string; entries: LeaderboardEntry[]; you: LeaderboardEntry | null }
 const API_URL = (import.meta.env.VITE_LEADERBOARD_URL ?? '').trim().replace(/\/+$/, '')
-export const leaderboardEnabled = API_URL !== ''
+// Keep leaderboard UI hidden until it is ready to return.
+const SHOW_LEADERBOARDS = false
+export const leaderboardEnabled = SHOW_LEADERBOARDS && API_URL !== ''
 const BROWSER_KEY = 'dailybreak:leaderboard:browser:v1'
 const NAME_KEY = 'dailybreak:leaderboard:nickname:v1'
 

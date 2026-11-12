@@ -15,6 +15,7 @@ import type { Mode } from './components/ModeIntro'
 import { HelpDialog } from './components/HelpDialog'
 import { GamePauseContext } from './lib/gamePause'
 import { LeaderboardPage } from './components/LeaderboardPage'
+import { leaderboardEnabled } from './lib/leaderboard'
 import './App.css'
 
 const ROUND_COLORS = ['#ff5cde', '#2266ff', '#ffe65c']
@@ -100,7 +101,7 @@ function DailySession({ rounds, dateKey }: DailyRoundsProps) {
 const currentMode = (): Mode | 'home' | 'leaderboards' => window.location.hash === '#daily' ? 'daily'
   : window.location.hash === '#endless' ? 'endless'
   : window.location.hash === '#arcade' ? 'arcade'
-  : window.location.hash === '#leaderboards' ? 'leaderboards' : 'home'
+  : leaderboardEnabled && window.location.hash === '#leaderboards' ? 'leaderboards' : 'home'
 
 function App() {
   const { dateKey, rounds } = useDailyGame()
@@ -120,7 +121,7 @@ function App() {
         <div className="header-tools">
           <time dateTime={dateKey}>{dateKey}</time>
           <nav className="header-actions" aria-label="Game navigation">
-            {mode === 'home' && <a className="home-link" href="#leaderboards">Leaderboards</a>}
+            {leaderboardEnabled && mode === 'home' && <a className="home-link" href="#leaderboards">Leaderboards</a>}
             {mode !== 'home' && mode !== 'leaderboards' && <button className="home-link help-button" type="button" onClick={() => setHelpOpen(true)}>Help</button>}
             {mode !== 'home' && <a className="home-link" href="#">Home</a>}
           </nav>
@@ -128,7 +129,7 @@ function App() {
       </header>
       <GamePauseContext value={helpOpen}>
       {mode === 'home' && <HomeScreen />}
-      {mode === 'leaderboards' && <LeaderboardPage dateKey={dateKey} />}
+      {leaderboardEnabled && mode === 'leaderboards' && <LeaderboardPage dateKey={dateKey} />}
       {mode === 'daily' && <ModeIntro key="daily" mode="daily"><DailySession key={dateKey} rounds={rounds} dateKey={dateKey} /></ModeIntro>}
       {mode === 'endless' && <ModeIntro key="endless" mode="endless"><EndlessMode dateKey={dateKey} /></ModeIntro>}
       {mode === 'arcade' && <ModeIntro key="arcade" mode="arcade"><EndlessMode mode="arcade" dateKey={dateKey} /></ModeIntro>}
